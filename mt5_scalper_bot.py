@@ -42,6 +42,11 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+try:  # shared start/stop/emergency flags written by the mobile API
+    import control
+except Exception:  # pragma: no cover - keep the bot runnable standalone
+    control = None
+
 
 # ---------------- CONFIG ----------------
 
@@ -394,6 +399,9 @@ def send_order(symbol: str, side: str, sl: float, tp: float, volume: float):
 
 
 def trade_symbol(symbol: str) -> None:
+    if control is not None and not control.trading_allowed():
+        return
+
     if daily_loss_limit_hit():
         return
 
@@ -468,7 +476,18 @@ def trade_symbol(symbol: str) -> None:
         symbol, side, x.rsi, x.atr, volume
     )
 
-    send_order(symbol, side, sl, tp, volume)
+    result = send_order(symbol, side, sl, tp, volume)
+
+    if control is not None:
+        try:
+            dry = bool(getattr(result, "dry_run", False)) or (isinstance(result, dict) and result.get("dry_run"))
+            control.log_event(
+                "SIGNAL_DRY_RUN" if dry else "ORDER",
+                symbol, side, entry, sl, tp, volume,
+                message=f"RSI={x.rsi:.1f} ATR={x.atr}",
+            )
+        except Exception:
+            log.exception("Could not write event to the shared database")
 
 
 # ---------------- MAIN LOOP ----------------
@@ -494,8 +513,28 @@ def main():
     # Process once per newly closed candle.
     last_closed_bar: dict[str, pd.Timestamp] = {}
 
+    last_allowed = None
+
     try:
         while True:
+            # START / STOP / EMERGENCY-STOP from the phone is stored in the
+            # shared SQLite state file and checked here on every iteration.
+            allowed = control.trading_allowed() if control is not None else True
+            if allowed != last_allowed:
+                if allowed:
+                    log.info("CONTROL | trading enabled (start from phone/CLI)")
+                else:
+                    flags = control.get_flags() if control is not None else {}
+                    log.warning(
+                        "CONTROL | trading disabled (emergency_stop=%s, running=%s)",
+                        flags.get("emergency_stop"), flags.get("bot_running"),
+                    )
+                last_allowed = allowed
+
+            if not allowed:
+                time.sleep(CFG.poll_seconds)
+                continue
+
             if daily_loss_limit_hit():
                 log.error("Trading halted for this session.")
                 time.sleep(30)
