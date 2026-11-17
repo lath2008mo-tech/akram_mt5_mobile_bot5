@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="42" fill="#0b1220"/>
+  <path d="M28 128 L60 96 L86 116 L120 70 L164 58" fill="none" stroke="#22c55e" stroke-width="12"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="120" cy="70" r="9" fill="#22c55e"/>
+  <circle cx="164" cy="58" r="9" fill="#22c55e"/>
+  <text x="96" y="168" font-family="system-ui,sans-serif" font-size="26" font-weight="700"
+        fill="#8ea0c0" text-anchor="middle">MT5</text>
+</svg>

@@ -1,0 +1,10 @@
+# Core API + mobile web app
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+python-dotenv>=1.0
+
+# Trading engine
+MetaTrader5>=5.0.45 ; sys_platform == "win32"
+pandas>=2.0
+numpy>=1.26

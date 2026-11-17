@@ -42,6 +42,14 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+try:  # shared start/stop/emergency flags written by the mobile API
+    import control
+except Exception:  # pragma: no cover - keep the bot runnable standalone
+    control = None
+
+import execution
+import strategy as strat
+
 
 # ---------------- CONFIG ----------------
 
@@ -85,6 +93,37 @@ class Config:
 
 
 CFG = Config()
+
+# Strategy parameters. Every filter is expressed in ATR, so the same numbers
+# work for EURUSD and XAUUSD. Tune with backtest.py before trusting them.
+STRAT = strat.StrategyParams(
+    fast_ema=CFG.fast_ema,
+    slow_ema=CFG.slow_ema,
+    trend_ema=CFG.trend_ema,
+    htf_ema=int(os.getenv("HTF_EMA", "100")),
+    rsi_period=CFG.rsi_period,
+    atr_period=CFG.atr_period,
+    breakout_lookback=20,
+    min_score=int(os.getenv("MIN_SCORE", "4")),
+    trend_adx=float(os.getenv("TREND_ADX", "22")),
+    range_adx=float(os.getenv("RANGE_ADX", "18")),
+    session_start_hour=int(os.getenv("SESSION_START_HOUR", "7")),
+    session_end_hour=int(os.getenv("SESSION_END_HOUR", "20")),
+    trade_friday=os.getenv("TRADE_FRIDAY", "true").lower() in {"1", "true", "yes"},
+    allow_range_trades=os.getenv("ALLOW_RANGE_TRADES", "true").lower() in {"1", "true", "yes"},
+    min_atr_points=CFG.min_atr_points,
+    sl_atr_mult=CFG.atr_sl_mult,
+    tp_atr_mult=CFG.atr_tp_mult,
+    partial_at_r=float(os.getenv("PARTIAL_AT_R", "1.0")),
+    partial_fraction=float(os.getenv("PARTIAL_FRACTION", "0.5")),
+    breakeven_at_r=float(os.getenv("BREAKEVEN_AT_R", "1.0")),
+    trail_start_r=float(os.getenv("TRAIL_START_R", "1.2")),
+    trail_atr_mult=float(os.getenv("TRAIL_ATR_MULT", "1.2")),
+)
+
+MAX_CONSECUTIVE_LOSSES = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "3"))
+BREAKER_COOLDOWN_MIN = int(os.getenv("BREAKER_COOLDOWN_MINUTES", "60"))
+MAX_USD_EXPOSURE = int(os.getenv("MAX_USD_EXPOSURE", "2"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,67 +188,29 @@ def get_rates(symbol: str) -> Optional[pd.DataFrame]:
 # ---------------- INDICATORS ----------------
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    out["ema_fast"] = out["close"].ewm(span=CFG.fast_ema, adjust=False).mean()
-    out["ema_slow"] = out["close"].ewm(span=CFG.slow_ema, adjust=False).mean()
-    out["ema_trend"] = out["close"].ewm(span=CFG.trend_ema, adjust=False).mean()
-
-    delta = out["close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(alpha=1 / CFG.rsi_period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / CFG.rsi_period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    out["rsi"] = 100 - (100 / (1 + rs))
-
-    prev_close = out["close"].shift(1)
-    tr = pd.concat([
-        out["high"] - out["low"],
-        (out["high"] - prev_close).abs(),
-        (out["low"] - prev_close).abs(),
-    ], axis=1).max(axis=1)
-
-    out["atr"] = tr.ewm(alpha=1 / CFG.atr_period, adjust=False).mean()
-
-    out["high20"] = out["high"].rolling(20).max().shift(1)
-    out["low20"] = out["low"].rolling(20).min().shift(1)
-
-    return out
+    """Indicators come from strategy.py so live and backtest stay identical."""
+    return strat.add_indicators(df, STRAT)
 
 
 # ---------------- SIGNAL ENGINE ----------------
 
+def decide_for(df: pd.DataFrame, symbol: str = "") -> strat.Decision:
+    """Full decision with filters: regime, session, setup score."""
+    ratio = 0.0
+    if symbol:
+        try:
+            tick = mt5.symbol_info_tick(symbol)
+            atr = float(df.iloc[-1]["atr"])
+            if tick is not None and atr > 0:
+                ratio = (float(tick.ask) - float(tick.bid)) / atr
+        except Exception:
+            ratio = 0.0
+    return strat.decide(df, STRAT, spread_atr_ratio=ratio)
+
+
 def signal(df: pd.DataFrame) -> Optional[str]:
-    if len(df) < 60:
-        return None
-
-    x = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    bullish_trend = (
-        x.ema_fast > x.ema_slow > x.ema_trend
-        and x.close > x.ema_trend
-    )
-    bearish_trend = (
-        x.ema_fast < x.ema_slow < x.ema_trend
-        and x.close < x.ema_trend
-    )
-
-    bullish_momentum = 52 <= x.rsi <= 72
-    bearish_momentum = 28 <= x.rsi <= 48
-
-    breakout_up = x.close > x.high20 and prev.close <= prev.high20
-    breakout_down = x.close < x.low20 and prev.close >= prev.low20
-
-    if bullish_trend and bullish_momentum and breakout_up:
-        return "BUY"
-
-    if bearish_trend and bearish_momentum and breakout_down:
-        return "SELL"
-
-    return None
+    """Kept for the /signals endpoint in main.py."""
+    return strat.decide(df, STRAT).side
 
 
 # ---------------- RISK ENGINE ----------------
@@ -394,6 +395,9 @@ def send_order(symbol: str, side: str, sl: float, tp: float, volume: float):
 
 
 def trade_symbol(symbol: str) -> None:
+    if control is not None and not control.trading_allowed():
+        return
+
     if daily_loss_limit_hit():
         return
 
@@ -433,18 +437,24 @@ def trade_symbol(symbol: str) -> None:
                  symbol, atr_points, CFG.min_atr_points)
         return
 
-    side = signal(df)
-    if side is None:
+    # Regime + session + setup scoring. This is the same call the backtester
+    # makes, so what you measure is what the bot trades.
+    d = decide_for(df, symbol)
+    if not d.ok:
+        log.debug("%s: no trade (%s, score %s)", symbol, d.blocked, d.score)
         return
 
+    # Portfolio-level guard: do not stack correlated USD risk.
+    open_symbols = [p.symbol for p in get_positions()
+                    if int(getattr(p, "magic", 0)) == CFG.magic]
+    if not execution.correlation_guard(open_symbols, symbol, MAX_USD_EXPOSURE):
+        log.info("%s: correlation guard blocked another similar exposure", symbol)
+        return
+
+    side = d.side
     entry = tick.ask if side == "BUY" else tick.bid
 
-    if side == "BUY":
-        sl = entry - CFG.atr_sl_mult * x.atr
-        tp = entry + CFG.atr_tp_mult * x.atr
-    else:
-        sl = entry + CFG.atr_sl_mult * x.atr
-        tp = entry - CFG.atr_tp_mult * x.atr
+    sl, tp = strat.stops_for(side, entry, d.atr, STRAT)
 
     # Respect broker's minimum stop distance.
     min_stop = float(info.trade_stops_level) * info.point
@@ -464,11 +474,24 @@ def trade_symbol(symbol: str) -> None:
         return
 
     log.info(
-        "SIGNAL | %s | %s | RSI=%.1f ATR=%s volume=%.2f",
-        symbol, side, x.rsi, x.atr, volume
+        "SIGNAL | %s | %s | score=%s/%s regime=%s | RSI=%.1f ATR=%s volume=%.2f | %s",
+        symbol, side, d.score, STRAT.min_score, d.regime, x.rsi, x.atr, volume,
+        "; ".join(d.reasons[:3]),
     )
 
-    send_order(symbol, side, sl, tp, volume)
+    result = send_order(symbol, side, sl, tp, volume)
+
+    if control is not None:
+        try:
+            dry = bool(getattr(result, "dry_run", False)) or (isinstance(result, dict) and result.get("dry_run"))
+            control.log_event(
+                "SIGNAL_DRY_RUN" if dry else "ORDER",
+                symbol, side, entry, sl, tp, volume,
+                message=(f"score={d.score} regime={d.regime} "
+                         f"RSI={x.rsi:.1f} ATR={x.atr:.6g} | {'; '.join(d.reasons[:3])}"),
+            )
+        except Exception:
+            log.exception("Could not write event to the shared database")
 
 
 # ---------------- MAIN LOOP ----------------
@@ -484,22 +507,64 @@ def main():
             log.warning("%s: could not select symbol", symbol)
 
     log.info(
-        "STARTED | TF=M%s | risk=%.2f%% | max daily loss=%.2f%% | dry_run=%s",
-        CFG.timeframe,
-        CFG.risk_per_trade * 100,
-        CFG.max_daily_loss * 100,
-        CFG.dry_run,
+        "STARTED | TF=M%s | risk=%.2f%% | max daily loss=%.2f%% | dry_run=%s | "
+        "min_score=%s | sessions=%s-%s UTC | SL %.1fxATR / TP %.1fxATR",
+        CFG.timeframe, CFG.risk_per_trade * 100, CFG.max_daily_loss * 100, CFG.dry_run,
+        STRAT.min_score, STRAT.session_start_hour, STRAT.session_end_hour,
+        STRAT.sl_atr_mult, STRAT.tp_atr_mult,
     )
+
+    # Daily loss limit survives restarts (stored in bot_state.db).
+    start_equity = execution.daily_start_equity(equity())
+    log.info("Daily start equity: %.2f | circuit breaker: %s losses",
+             start_equity, MAX_CONSECUTIVE_LOSSES)
 
     # Process once per newly closed candle.
     last_closed_bar: dict[str, pd.Timestamp] = {}
+    atr_cache: dict[str, float] = {}
+
+    last_allowed = None
 
     try:
         while True:
-            if daily_loss_limit_hit():
-                log.error("Trading halted for this session.")
+            # START / STOP / EMERGENCY-STOP from the phone is stored in the
+            # shared SQLite state file and checked here on every iteration.
+            allowed = control.trading_allowed() if control is not None else True
+            if allowed != last_allowed:
+                if allowed:
+                    log.info("CONTROL | trading enabled (start from phone/CLI)")
+                else:
+                    flags = control.get_flags() if control is not None else {}
+                    log.warning(
+                        "CONTROL | trading disabled (emergency_stop=%s, running=%s)",
+                        flags.get("emergency_stop"), flags.get("bot_running"),
+                    )
+                last_allowed = allowed
+
+            if not allowed:
+                time.sleep(CFG.poll_seconds)
+                continue
+
+            hit, loss = execution.daily_loss_hit(equity(), CFG.max_daily_loss)
+            if hit:
+                log.error("DAILY LOSS LIMIT HIT (%.2f%%). No new trades today.", loss * 100)
                 time.sleep(30)
                 continue
+
+            if execution.circuit_breaker_active(MAX_CONSECUTIVE_LOSSES, BREAKER_COOLDOWN_MIN):
+                log.warning("Circuit breaker active after %s losses in a row.",
+                            MAX_CONSECUTIVE_LOSSES)
+                time.sleep(30)
+                continue
+
+            # Break-even / partial profit / trailing on everything already open.
+            try:
+                actions = execution.manage_open_positions(
+                    mt5, CFG.magic, STRAT, atr_cache, log=log, dry_run=CFG.dry_run)
+                if actions:
+                    log.info("Position management: %s action(s)", actions)
+            except Exception:
+                log.exception("Position management failed")
 
             for symbol in CFG.symbols:
                 try:
@@ -513,6 +578,13 @@ def main():
                         continue
 
                     last_closed_bar[symbol] = closed_bar
+
+                    try:
+                        atr_cache[symbol] = float(
+                            strat.atr_wilder(df, STRAT.atr_period).iloc[-1])
+                    except Exception:
+                        pass
+
                     trade_symbol(symbol)
 
                 except Exception:

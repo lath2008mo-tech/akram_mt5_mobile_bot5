@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1220" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>MT5 Mobile Bot</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<style>
+  :root{
+    --bg:#0b1220; --card:#131c2e; --card2:#0f1728; --line:#22304a;
+    --txt:#e8eefc; --muted:#8ea0c0; --green:#22c55e; --red:#ef4444;
+    --amber:#f59e0b; --blue:#3b82f6;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{padding:14px 14px calc(84px + env(safe-area-inset-bottom));max-width:720px;margin:0 auto}
+  h1{font-size:18px;margin:0}
+  .muted{color:var(--muted);font-size:12px}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.off{background:var(--red)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  .kpi{font-size:22px;font-weight:700;letter-spacing:-.4px}
+  .kpi small{font-size:13px;color:var(--muted);font-weight:500}
+  button{font:inherit;border:0;border-radius:14px;padding:14px 12px;font-weight:650;
+    color:#08111f;background:#dbe6fb;width:100%;cursor:pointer}
+  button:active{transform:scale(.985)}
+  button.primary{background:var(--green);color:#04150a}
+  button.warn{background:var(--amber);color:#1a1200}
+  button.danger{background:var(--red);color:#fff}
+  button.ghost{background:transparent;color:var(--txt);border:1px solid var(--line)}
+  button:disabled{opacity:.45}
+  input,select{font:inherit;width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);
+    background:var(--card2);color:var(--txt)}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{color:var(--muted);font-weight:500;text-align:left;padding:6px 4px;font-size:11px;text-transform:uppercase}
+  td{padding:8px 4px;border-top:1px solid var(--line)}
+  .pos{border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px;background:var(--card2)}
+  .pos .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px}
+  .badge.buy{background:rgba(34,197,94,.15);color:#5ee98b}
+  .badge.sell{background:rgba(239,68,68,.15);color:#ff8f8f}
+  .badge.grey{background:rgba(142,160,192,.15);color:var(--muted)}
+  .pnl.up{color:#5ee98b}.pnl.down{color:#ff8f8f}
+  nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(11,18,32,.92);
+    backdrop-filter:blur(12px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:20}
+  nav button{background:none;color:var(--muted);font-size:11px;font-weight:600;padding:12px 4px;border-radius:0}
+  nav button.active{color:var(--txt)}
+  .hide{display:none !important}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;background:#1e293b;
+    border:1px solid var(--line);padding:12px 16px;border-radius:12px;font-size:13px;z-index:60;
+    max-width:92vw;text-align:center}
+  .log{font-size:12px;border-top:1px solid var(--line);padding:8px 0}
+  .log:first-child{border-top:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (min-width:560px){.grid2{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+
+<header>
+  <span id="conn" class="dot"></span>
+  <div style="flex:1">
+    <h1>MT5 Mobile Bot</h1>
+    <div class="muted" id="sub">Ansluter…</div>
+  </div>
+  <button class="ghost" style="width:auto;padding:10px 14px" id="refresh">↻</button>
+</header>
+
+<!-- token gate -->
+<section id="gate" class="card hide">
+  <strong>Ange API-token</strong>
+  <p class="muted" style="margin:6px 0 0">Samma värde som <code>API_TOKEN</code> i serverns <code>.env</code>
+     (eller filen <code>.api_token</code> som skapas automatiskt).</p>
+  <label for="token">Token</label>
+  <input id="token" type="password" autocomplete="off" placeholder="klistra in token" />
+  <label for="apiBase">API-adress (lämna tom om appen ligger på samma server)</label>
+  <input id="apiBase" type="url" inputmode="url" autocomplete="off"
+         placeholder="http://192.168.1.42:8000" />
+  <div style="margin-top:12px"><button class="primary" id="saveToken">Spara token</button></div>
+  <div style="margin-top:10px"><button class="ghost" id="gateLater">Visa utan token (läsläge)</button></div>
+  <div style="margin-top:8px"><button class="ghost" id="gateDemo">Öppna demo med exempeldata</button></div>
+</section>
+
+<main id="app" class="hide">
+
+  <div id="readOnly" class="card hide" style="border-color:var(--amber)">
+    <strong style="color:var(--amber)">Läsläge</strong>
+    <div class="muted" style="margin-top:4px">
+      Servern kör utan MetaTrader 5, så saldo och positioner visas som <b>–</b>.
+      Klistra in API-token under <b>Inställningar</b> för att kunna styra boten.
+    </div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <section data-tab="home">
+    <div class="card">
+      <div class="row">
+        <div>
+          <div class="muted">Saldo</div>
+          <div class="kpi" id="balance">–</div>
+        </div>
+        <div>
+          <div class="muted">Equity</div>
+          <div class="kpi" id="equity">–</div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:14px">
+        <div><div class="muted">Öppna</div><div class="kpi" style="font-size:17px" id="openCount">–</div></div>
+        <div><div class="muted">Flytande P/L</div><div class="kpi" style="font-size:17px" id="profit">–</div></div>
+        <div><div class="muted">Läge</div><div class="kpi" style="font-size:17px" id="mode">–</div></div>
+        <div><div class="muted">Konto</div><div class="kpi" style="font-size:17px" id="account">–</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <button class="primary" id="btnStart">▶ Starta</button>
+        <button class="warn" id="btnStop">■ Stoppa</button>
+      </div>
+      <button class="danger" id="btnPanic">🚨 NÖDSTOPP</button>
+      <div class="muted" style="margin-top:8px">Nödstopp blockerar alla nya ordrar. Öppna positioner stängs inte automatiskt.</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button class="ghost" id="btnSignals">Hämta signaler</button>
+        <button class="danger" id="btnCloseAll">Stäng alla</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- POSITIONS -->
+  <section data-tab="pos" class="hide">
+    <div id="positions"><div class="muted">Inga positioner.</div></div>
+  </section>
+
+  <!-- SIGNALS -->
+  <section data-tab="sig" class="hide">
+    <div class="card">
+      <table>
+        <thead><tr><th>Symbol</th><th>Signal</th><th>RSI</th><th>Pris</th></tr></thead>
+        <tbody id="signals"><tr><td colspan="4" class="muted">Tryck “Hämta signaler”.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- LOG -->
+  <section data-tab="log" class="hide">
+    <div class="card" id="history"><div class="muted">Ingen historik än.</div></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section data-tab="set" class="hide">
+    <div class="card">
+      <label>Symboler (kommaseparerat)</label>
+      <input id="s_symbols" />
+      <div class="row">
+        <div><label>Tidsram (min)</label><select id="s_timeframe"></select></div>
+        <div><label>Max öppna</label><input id="s_max_open_positions" type="number" min="1" max="50" /></div>
+      </div>
+      <div class="row">
+        <div><label>Risk / trade (%)</label><input id="s_risk" type="number" step="0.05" min="0.05" max="5" /></div>
+        <div><label>Max daglig förlust (%)</label><input id="s_daily" type="number" step="0.1" min="0.1" max="20" /></div>
+      </div>
+      <div class="row">
+        <div><label>Max spread (punkter)</label><input id="s_spread" type="number" min="1" /></div>
+        <div><label>Cooldown (min)</label><input id="s_cooldown" type="number" min="0" /></div>
+      </div>
+      <div class="row">
+        <div><label>ATR SL ×</label><input id="s_sl" type="number" step="0.1" min="0.1" /></div>
+        <div><label>ATR TP ×</label><input id="s_tp" type="number" step="0.1" min="0.1" /></div>
+      </div>
+      <label>Läge</label>
+      <select id="s_dry">
+        <option value="true">DRY RUN – inga riktiga ordrar</option>
+        <option value="false">LIVE – riktiga ordrar</option>
+      </select>
+      <div style="margin-top:14px"><button class="primary" id="btnSaveSettings">Spara inställningar</button></div>
+      <div style="margin-top:10px"><button class="ghost" id="btnLogout">Logga ut (glöm token)</button></div>
+    </div>
+  </section>
+
+</main>
+
+<nav id="nav" class="hide">
+  <button data-go="home" class="active">Översikt</button>
+  <button data-go="pos">Positioner</button>
+  <button data-go="sig">Signaler</button>
+  <button data-go="log">Logg</button>
+  <button data-go="set">Inställningar</button>
+</nav>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TF = [1,2,3,4,5,6,10,12,15,20,30];
+let timer = null;
+
+// Storage can throw when the page runs inside a sandboxed iframe
+// (some browsers block localStorage in third-party contexts). Fall back to
+// memory so the UI never ends up as a blank page.
+const mem = {};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return mem[k] ?? null; } },
+  set(k, v) { mem[k] = v; try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { delete mem[k]; try { localStorage.removeItem(k); } catch (e) {} },
+};
+
+let token = store.get("mt5_token") || "";
+let apiBase = (store.get("mt5_api") || "").replace(/\/$/, "");
+let demo = false;
+
+// token via ?token=... (praktiskt när man öppnar länken på mobilen)
+const params = new URLSearchParams(location.search);
+const urlApi = params.get("api");
+if (urlApi) { apiBase = urlApi.replace(/\/$/, ""); store.set("mt5_api", apiBase); }
+const urlToken = params.get("token");
+if (urlToken) {
+  token = urlToken;
+  store.set("mt5_token", token);
+  try { history.replaceState({}, "", location.pathname); } catch (e) {}
+}
+
+window.addEventListener("error", (e) => {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = "UI-fel: " + (e.message || "okänt fel");
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+});
+
+function toast(msg, ms = 2600) {
+  const el = document.createElement("div");
+  el.className = "toast"; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+// Realistic-looking demo data so the UI can be judged without a server.
+const DEMO = {
+  status: { running: true, emergency_stop: false, dry_run: true, balance: 10000,
+            equity: 10042.5, margin_free: 9780.2, currency: "USD", login: 51234567,
+            server: "MetaQuotes-Demo", profit: 42.5, open_positions: 2,
+            mt5_connected: true, public_read_only: false, demo: true },
+  positions: [
+    { ticket: 41023311, symbol: "EURUSD", type: 0, side: "BUY", volume: 0.20,
+      price_open: 1.08642, sl: 1.08432, tp: 1.09062, profit: 26.4, comment: "STF-AutoBot" },
+    { ticket: 41023357, symbol: "XAUUSD", type: 1, side: "SELL", volume: 0.05,
+      price_open: 2348.10, sl: 2352.60, tp: 2339.10, profit: 16.1, comment: "STF-AutoBot" },
+  ],
+  settings: { symbols: ["EURUSD", "XAUUSD"], timeframe: 5, risk_per_trade: 0.0025,
+              max_daily_loss: 0.02, max_open_positions: 3, max_spread_points: 25,
+              cooldown_minutes: 10, atr_sl_mult: 1.5, atr_tp_mult: 2.0, dry_run: true },
+  history: [
+    { id: 4, ts: new Date().toISOString(), kind: "ORDER", symbol: "EURUSD", side: "BUY",
+      message: "Demo: 0.20 lots, SL 1.08432" },
+    { id: 3, ts: new Date(Date.now() - 9e5).toISOString(), kind: "SIGNAL_DRY_RUN",
+      symbol: "XAUUSD", side: "SELL", message: "Demo: RSI=41.2 ATR=3.9" },
+    { id: 2, ts: new Date(Date.now() - 36e5).toISOString(), kind: "START", symbol: "",
+      side: "", message: "Bot started" },
+  ],
+  signals: [
+    { symbol: "EURUSD", signal: "BUY", rsi: 61.4, atr: 0.00042, close: 1.08710 },
+    { symbol: "XAUUSD", signal: "NONE", rsi: 48.9, atr: 3.81, close: 2347.55 },
+  ],
+};
+
+function demoResponse(path) {
+  if (path.startsWith("/status")) return DEMO.status;
+  if (path.startsWith("/positions")) return DEMO.positions;
+  if (path.startsWith("/settings")) return DEMO.settings;
+  if (path.startsWith("/history")) return DEMO.history;
+  if (path.startsWith("/signals")) return DEMO.signals;
+  return { ok: true };
+}
+
+async function api(path, opts = {}) {
+  if (demo) {
+    if ((opts.method || "GET") !== "GET") toast("Demo-läge: inga riktiga ordrar skickas");
+    return demoResponse(path);
+  }
+  path = apiBase ? apiBase + path : path;
+  const res = await fetch(path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "X-API-Token": token, ...(opts.headers || {}) },
+  });
+  if (res.status === 401) throw new Error("Token krävs – klistra in den i Inställningar");
+  if (!res.ok) {
+    let msg = res.status + "";
+    try { const j = await res.json(); msg = j.detail || JSON.stringify(j); } catch (e) {}
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function money(v, cur) {
+  if (v === null || v === undefined) return "–";
+  return v.toLocaleString("sv-SE", { maximumFractionDigits: 2 }) + (cur ? " " + cur : "");
+}
+
+function showGate() {
+  $("gate").classList.remove("hide");
+  $("app").classList.add("hide");
+  $("nav").classList.add("hide");
+  $("conn").className = "dot off";
+  $("sub").textContent = "Inte inloggad";
+}
+
+function showApp() {
+  $("gate").classList.add("hide");
+  $("app").classList.remove("hide");
+  $("nav").classList.remove("hide");
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api("/status");
+    $("readOnly").classList.toggle("hide", !s.public_read_only);
+    $("conn").className = "dot " + (s.mt5_connected ? "on" : "off");
+    $("sub").textContent = s.mt5_connected
+      ? `MT5 ansluten · ${s.server || ""} · uppdaterad ${new Date().toLocaleTimeString("sv-SE")}`
+      : "API uppe, men MT5 är inte ansluten på servern";
+    $("balance").textContent = money(s.balance, s.currency);
+    $("equity").textContent = money(s.equity, s.currency);
+    $("openCount").textContent = s.open_positions;
+    const p = $("profit");
+    p.textContent = money(s.profit, s.currency);
+    p.className = "kpi " + (s.profit > 0 ? "up" : s.profit < 0 ? "down" : "");
+    $("mode").textContent = s.emergency_stop ? "NÖDSTOPP" : s.dry_run ? "DRY RUN" : "LIVE";
+    $("mode").style.color = s.emergency_stop ? "var(--red)" : s.dry_run ? "var(--amber)" : "var(--green)";
+    $("account").textContent = s.login ? "#" + s.login : "–";
+    $("btnStart").disabled = s.running && !s.emergency_stop;
+    $("btnStop").disabled = !s.running;
+    return true;
+  } catch (e) {
+    if (e.message.indexOf("Token") !== -1) { showGate(); return false; }
+    $("conn").className = "dot off";
+    $("sub").textContent = "Serverfel: " + e.message;
+    if (e instanceof TypeError) { showGate(); }
+    return false;
+  }
+}
+
+async function loadPositions() {
+  try {
+    const rows = await api("/positions");
+    const box = $("positions");
+    if (!rows.length) { box.innerHTML = '<div class="muted">Inga öppna positioner.</div>'; return; }
+    box.innerHTML = rows.map((r) => `
+      <div class="pos">
+        <div class="top">
+          <strong>${r.symbol}</strong>
+          <span class="badge ${r.side === "BUY" ? "buy" : "sell"}">${r.side} ${r.volume}</span>
+        </div>
+        <div class="muted">#${r.ticket} · öppnad ${r.price_open} · SL ${r.sl || "–"} · TP ${r.tp || "–"}</div>
+        <div class="top" style="margin-top:8px">
+          <span class="pnl ${r.profit >= 0 ? "up" : "down"}">${r.profit.toFixed(2)}</span>
+          <button class="ghost" style="width:auto;padding:8px 14px" onclick="closeOne(${r.ticket})">Stäng</button>
+        </div>
+      </div>`).join("");
+  } catch (e) { /* handled elsewhere */ }
+}
+
+async function loadHistory() {
+  try {
+    const rows = await api("/history?limit=40");
+    if (!rows.length) { $("history").innerHTML = '<div class="muted">Ingen historik än.</div>'; return; }
+    $("history").innerHTML = rows.map((r) => `
+      <div class="log">
+        <strong>${r.kind}</strong> ${r.symbol || ""} ${r.side || ""}
+        <span class="muted"> · ${new Date(r.ts).toLocaleString("sv-SE")}</span>
+        ${r.message ? `<div class="muted">${r.message}</div>` : ""}
+      </div>`).join("");
+  } catch (e) {}
+}
+
+async function loadSettings() {
+  try {
+    const s = await api("/settings");
+    $("s_symbols").value = s.symbols.join(",");
+    $("s_timeframe").value = s.timeframe;
+    $("s_max_open_positions").value = s.max_open_positions;
+    $("s_risk").value = (s.risk_per_trade * 100).toFixed(2);
+    $("s_daily").value = (s.max_daily_loss * 100).toFixed(2);
+    $("s_spread").value = s.max_spread_points;
+    $("s_cooldown").value = s.cooldown_minutes;
+    $("s_sl").value = s.atr_sl_mult;
+    $("s_tp").value = s.atr_tp_mult;
+    $("s_dry").value = String(s.dry_run);
+  } catch (e) {}
+}
+
+async function closeOne(ticket) {
+  if (!confirm("Stäng position #" + ticket + "?")) return;
+  try { await api(`/positions/${ticket}/close`, { method: "POST" }); toast("Stängningsorder skickad"); }
+  catch (e) { toast("Fel: " + e.message, 4000); }
+  loadPositions(); refreshStatus();
+}
+
+$("gateDemo").onclick = async () => {
+  demo = true;
+  showApp();
+  await refreshStatus();
+  loadPositions();
+  toast("Demo-läge med exempeldata");
+};
+
+$("gateLater").onclick = async () => {
+  const ok = await refreshStatus();
+  if (ok) { showApp(); loadPositions(); } else { toast("Läsläge är inte tillgängligt utan token"); }
+};
+
+$("saveToken").onclick = async () => {
+  token = $("token").value.trim();
+  apiBase = $("apiBase").value.trim().replace(/\/$/, "");
+  store.set("mt5_api", apiBase);
+  if (!token && !apiBase) return;
+  demo = false;
+  store.set("mt5_token", token);
+  showApp(); await refreshStatus();
+  if ($("conn").className.includes("off") && $("sub").textContent.includes("Serverfel")) {
+    store.del("mt5_token"); showGate(); toast("Token avvisades av servern");
+  } else { toast("Token sparad"); }
+};
+$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveToken").click(); });
+$("refresh").onclick = () => { refreshStatus(); loadPositions(); };
+$("btnLogout").onclick = () => { store.del("mt5_token"); token = ""; demo = false; showGate(); };
+
+$("btnStart").onclick = async () => {
+  try { await api("/bot/start", { method: "POST" }); toast("Boten startad"); } catch (e) { toast("Fel: " + e.message); }
+  refreshStatus();
+};
+$("btnStop").onclick = async () => {
+  try { await api("/bot/stop", { method: "POST" }); toast("Boten stoppad"); } catch (e) { toast("Fel: " + e.message); }
+  refreshStatus();
+};
+$("btnPanic").onclick = async () => {
+  if (!confirm("NÖDSTOPP: blockera alla nya ordrar?")) return;
+  try { await api("/bot/emergency-stop", { method: "POST" }); toast("NÖDSTOPP aktivt"); } catch (e) { toast("Fel: " + e.message); }
+  refreshStatus();
+};
+$("btnCloseAll").onclick = async () => {
+  const t = prompt('Skriv CLOSE ALL för att stänga alla öppna positioner:');
+  if (t === null) return;
+  try {
+    const r = await api("/positions/close-all", { method: "POST", body: JSON.stringify({ confirm: t }) });
+    const ok = r.results.filter((x) => x.ok).length;
+    toast(`${ok}/${r.results.length} positioner stängda`);
+  } catch (e) { toast("Fel: " + e.message, 4000); }
+  loadPositions(); refreshStatus();
+};
+$("btnSignals").onclick = async () => {
+  try {
+    const rows = await api("/signals");
+    const body = $("signals");
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="muted">Inga signaler.</td></tr>'; return; }
+    body.innerHTML = rows.map((r) => `
+      <tr>
+        <td>${r.symbol}</td>
+        <td><span class="badge ${r.signal === "BUY" ? "buy" : r.signal === "SELL" ? "sell" : "grey"}">${r.signal}</span></td>
+        <td>${r.rsi ? r.rsi.toFixed(1) : "–"}</td>
+        <td>${r.close !== undefined ? r.close : "–"}</td>
+      </tr>`).join("");
+    go("sig");
+  } catch (e) { toast("Fel: " + e.message, 4000); }
+};
+$("btnSaveSettings").onclick = async () => {
+  const payload = {
+    symbols: $("s_symbols").value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+    timeframe: Number($("s_timeframe").value),
+    risk_per_trade: Number($("s_risk").value) / 100,
+    max_daily_loss: Number($("s_daily").value) / 100,
+    max_open_positions: Number($("s_max_open_positions").value),
+    max_spread_points: Number($("s_spread").value),
+    cooldown_minutes: Number($("s_cooldown").value),
+    atr_sl_mult: Number($("s_sl").value),
+    atr_tp_mult: Number($("s_tp").value),
+    dry_run: $("s_dry").value === "true",
+  };
+  try { await api("/settings", { method: "PUT", body: JSON.stringify(payload) }); toast("Inställningar sparade"); }
+  catch (e) { toast("Fel: " + e.message, 4000); }
+  refreshStatus();
+};
+
+function go(tab) {
+  document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hide", s.dataset.tab !== tab));
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.go === tab));
+  if (tab === "pos") loadPositions();
+  if (tab === "log") loadHistory();
+  if (tab === "set") loadSettings();
+}
+document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.dataset.go); });
+
+(async function init() {
+  $("s_timeframe").innerHTML = TF.map((t) => `<option value="${t}">M${t}</option>`).join("");
+
+  $("apiBase").value = apiBase;
+  $("token").value = token ? "" : "";
+
+  const ok = await refreshStatus();
+  if (!ok) { showGate(); return; }
+
+  showApp();
+  loadPositions();
+  timer = setInterval(() => {
+    if (document.hidden) return;
+    refreshStatus();
+    if (!document.querySelector('[data-tab="pos"]').classList.contains("hide")) loadPositions();
+  }, 5000);
+})();
+</script>
+</body>
+</html>
