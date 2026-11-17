@@ -284,6 +284,12 @@ def icon():
     return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # browsers ask for this automatically; serve the SVG instead of a 404
+    return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
+
+
 # ---------------------------------------------------------------- account / status
 
 @app.get("/status")
