@@ -251,6 +251,7 @@ const DEMO = {
             equity: 10042.5, margin_free: 9780.2, currency: "USD", login: 51234567,
             server: "MetaQuotes-Demo", profit: 42.5, open_positions: 2,
             mt5_connected: true, public_read_only: false, demo: true },
+  demoFlag: true,
   positions: [
     { ticket: 41023311, symbol: "EURUSD", type: 0, side: "BUY", volume: 0.20,
       price_open: 1.08642, sl: 1.08432, tp: 1.09062, profit: 26.4, comment: "STF-AutoBot" },
@@ -321,9 +322,12 @@ function showApp() {
   $("nav").classList.remove("hide");
 }
 
+let lastStatus = null;
+
 async function refreshStatus() {
   try {
     const s = await api("/status");
+    lastStatus = s;
     $("readOnly").classList.toggle("hide", !s.public_read_only);
     $("conn").className = "dot " + (s.mt5_connected ? "on" : "off");
     $("sub").textContent = s.mt5_connected
@@ -508,6 +512,13 @@ document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.
 
   const ok = await refreshStatus();
   if (!ok) { showGate(); return; }
+
+  const wantsDemo = new URLSearchParams(location.search).get("demo") !== "0";
+  if (wantsDemo && lastStatus && lastStatus.public_read_only && !token) {
+    demo = true;
+    await refreshStatus();
+    toast("Exempeldata – MT5 körs inte på den här servern", 4200);
+  }
 
   showApp();
   loadPositions();
