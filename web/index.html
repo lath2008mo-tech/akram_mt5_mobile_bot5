@@ -7,8 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>MT5 Mobile Bot</title>
-<link rel="manifest" href="/manifest.webmanifest" />
-<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
 <style>
   :root{
     --bg:#0b1220; --card:#131c2e; --card2:#0f1728; --line:#22304a;
@@ -83,8 +83,12 @@
      (eller filen <code>.api_token</code> som skapas automatiskt).</p>
   <label for="token">Token</label>
   <input id="token" type="password" autocomplete="off" placeholder="klistra in token" />
+  <label for="apiBase">API-adress (lämna tom om appen ligger på samma server)</label>
+  <input id="apiBase" type="url" inputmode="url" autocomplete="off"
+         placeholder="http://192.168.1.42:8000" />
   <div style="margin-top:12px"><button class="primary" id="saveToken">Spara token</button></div>
   <div style="margin-top:10px"><button class="ghost" id="gateLater">Visa utan token (läsläge)</button></div>
+  <div style="margin-top:8px"><button class="ghost" id="gateDemo">Öppna demo med exempeldata</button></div>
 </section>
 
 <main id="app" class="hide">
@@ -212,9 +216,14 @@ const store = {
 };
 
 let token = store.get("mt5_token") || "";
+let apiBase = (store.get("mt5_api") || "").replace(/\/$/, "");
+let demo = false;
 
 // token via ?token=... (praktiskt när man öppnar länken på mobilen)
-const urlToken = new URLSearchParams(location.search).get("token");
+const params = new URLSearchParams(location.search);
+const urlApi = params.get("api");
+if (urlApi) { apiBase = urlApi.replace(/\/$/, ""); store.set("mt5_api", apiBase); }
+const urlToken = params.get("token");
 if (urlToken) {
   token = urlToken;
   store.set("mt5_token", token);
@@ -236,7 +245,50 @@ function toast(msg, ms = 2600) {
   setTimeout(() => el.remove(), ms);
 }
 
+// Realistic-looking demo data so the UI can be judged without a server.
+const DEMO = {
+  status: { running: true, emergency_stop: false, dry_run: true, balance: 10000,
+            equity: 10042.5, margin_free: 9780.2, currency: "USD", login: 51234567,
+            server: "MetaQuotes-Demo", profit: 42.5, open_positions: 2,
+            mt5_connected: true, public_read_only: false, demo: true },
+  positions: [
+    { ticket: 41023311, symbol: "EURUSD", type: 0, side: "BUY", volume: 0.20,
+      price_open: 1.08642, sl: 1.08432, tp: 1.09062, profit: 26.4, comment: "STF-AutoBot" },
+    { ticket: 41023357, symbol: "XAUUSD", type: 1, side: "SELL", volume: 0.05,
+      price_open: 2348.10, sl: 2352.60, tp: 2339.10, profit: 16.1, comment: "STF-AutoBot" },
+  ],
+  settings: { symbols: ["EURUSD", "XAUUSD"], timeframe: 5, risk_per_trade: 0.0025,
+              max_daily_loss: 0.02, max_open_positions: 3, max_spread_points: 25,
+              cooldown_minutes: 10, atr_sl_mult: 1.5, atr_tp_mult: 2.0, dry_run: true },
+  history: [
+    { id: 4, ts: new Date().toISOString(), kind: "ORDER", symbol: "EURUSD", side: "BUY",
+      message: "Demo: 0.20 lots, SL 1.08432" },
+    { id: 3, ts: new Date(Date.now() - 9e5).toISOString(), kind: "SIGNAL_DRY_RUN",
+      symbol: "XAUUSD", side: "SELL", message: "Demo: RSI=41.2 ATR=3.9" },
+    { id: 2, ts: new Date(Date.now() - 36e5).toISOString(), kind: "START", symbol: "",
+      side: "", message: "Bot started" },
+  ],
+  signals: [
+    { symbol: "EURUSD", signal: "BUY", rsi: 61.4, atr: 0.00042, close: 1.08710 },
+    { symbol: "XAUUSD", signal: "NONE", rsi: 48.9, atr: 3.81, close: 2347.55 },
+  ],
+};
+
+function demoResponse(path) {
+  if (path.startsWith("/status")) return DEMO.status;
+  if (path.startsWith("/positions")) return DEMO.positions;
+  if (path.startsWith("/settings")) return DEMO.settings;
+  if (path.startsWith("/history")) return DEMO.history;
+  if (path.startsWith("/signals")) return DEMO.signals;
+  return { ok: true };
+}
+
 async function api(path, opts = {}) {
+  if (demo) {
+    if ((opts.method || "GET") !== "GET") toast("Demo-läge: inga riktiga ordrar skickas");
+    return demoResponse(path);
+  }
+  path = apiBase ? apiBase + path : path;
   const res = await fetch(path, {
     ...opts,
     headers: { "Content-Type": "application/json", "X-API-Token": token, ...(opts.headers || {}) },
@@ -293,6 +345,7 @@ async function refreshStatus() {
     if (e.message.indexOf("Token") !== -1) { showGate(); return false; }
     $("conn").className = "dot off";
     $("sub").textContent = "Serverfel: " + e.message;
+    if (e instanceof TypeError) { showGate(); }
     return false;
   }
 }
@@ -353,6 +406,14 @@ async function closeOne(ticket) {
   loadPositions(); refreshStatus();
 }
 
+$("gateDemo").onclick = async () => {
+  demo = true;
+  showApp();
+  await refreshStatus();
+  loadPositions();
+  toast("Demo-läge med exempeldata");
+};
+
 $("gateLater").onclick = async () => {
   const ok = await refreshStatus();
   if (ok) { showApp(); loadPositions(); } else { toast("Läsläge är inte tillgängligt utan token"); }
@@ -360,7 +421,10 @@ $("gateLater").onclick = async () => {
 
 $("saveToken").onclick = async () => {
   token = $("token").value.trim();
-  if (!token) return;
+  apiBase = $("apiBase").value.trim().replace(/\/$/, "");
+  store.set("mt5_api", apiBase);
+  if (!token && !apiBase) return;
+  demo = false;
   store.set("mt5_token", token);
   showApp(); await refreshStatus();
   if ($("conn").className.includes("off") && $("sub").textContent.includes("Serverfel")) {
@@ -369,7 +433,7 @@ $("saveToken").onclick = async () => {
 };
 $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveToken").click(); });
 $("refresh").onclick = () => { refreshStatus(); loadPositions(); };
-$("btnLogout").onclick = () => { store.del("mt5_token"); token = ""; showGate(); };
+$("btnLogout").onclick = () => { store.del("mt5_token"); token = ""; demo = false; showGate(); };
 
 $("btnStart").onclick = async () => {
   try { await api("/bot/start", { method: "POST" }); toast("Boten startad"); } catch (e) { toast("Fel: " + e.message); }
@@ -438,6 +502,9 @@ document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.
 
 (async function init() {
   $("s_timeframe").innerHTML = TF.map((t) => `<option value="${t}">M${t}</option>`).join("");
+
+  $("apiBase").value = apiBase;
+  $("token").value = token ? "" : "";
 
   const ok = await refreshStatus();
   if (!ok) { showGate(); return; }
