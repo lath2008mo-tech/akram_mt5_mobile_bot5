@@ -50,6 +50,18 @@ python -m unittest discover -s tests -v                  # 18 tests
 No strategy can promise profit. Judge a setting by expectancy in R, profit
 factor and drawdown — and keep `DRY_RUN=true` until it holds up out of sample.
 
+## Fastest start on Windows: `start_bot.bat`
+
+Double-click it. It creates the virtualenv, asks for the bot token **once**,
+finds the chat id itself, saves `.env`, sends a test message and starts the
+scanner. `check_signals.bat` shows the current state without starting anything.
+
+```bash
+python setup_wizard.py --check              # am I configured?
+python setup_wizard.py --token 123:AAF…     # skip the question
+python setup_wizard.py --token … --chat-id 42 --no-start
+```
+
 ## Connect Telegram from the phone (no file editing)
 
 The app can save the token for you and figure out the chat id itself:
