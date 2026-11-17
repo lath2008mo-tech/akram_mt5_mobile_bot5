@@ -144,6 +144,13 @@ Interaktiv dokumentation: `http://<server>:8000/docs`
 | Symbolen hittas inte | Många brokers har suffix, t.ex. `EURUSD.m` eller `EURUSDm` — använd exakt det namn som syns i MT5 Market Watch |
 | Ingenting händer efter Start | `run_bot.bat` körs inte, eller spread/ATR-filter stoppar alla trades (syns i loggen) |
 
+## Strategin och risken
+
+Boten använder nu fyra setups, ADX-regimfilter, sessions- och spreadfilter samt
+R-baserad hantering (delvis vinst, break-even, trailing, circuit breaker).
+Allt är mätbart med `python backtest.py --symbol EURUSD --tf 5 --bars 50000`
+och förklaras i [RESEARCH.md](RESEARCH.md).
+
 ## Säkerhet & ansvar
 
 - Kör **DEMO** tills flödet fungerar. Byt till LIVE först när du förstår alla knappar.
