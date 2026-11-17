@@ -107,6 +107,105 @@ def send_sms(text: str) -> ChannelResult:
     return ChannelResult("sms", ok, detail)
 
 
+# ---------------------------------------------------------------- setup helpers
+
+def normalize_token(raw: str) -> str:
+    """Trim stray characters people pick up when copying from chat."""
+    token = (raw or "").strip().strip('"').strip("'")
+    return token.replace("\\_", "_").replace(" ", "")
+
+
+def token_looks_valid(token: str) -> bool:
+    """Telegram bot tokens are '<digits>:<35 chars>'. Catches most typos early."""
+    if not token or ":" not in token:
+        return False
+    head, _, tail = token.partition(":")
+    return head.isdigit() and len(tail) >= 30
+
+
+def _get_json(url: str) -> dict:  # pragma: no cover - network
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode("utf-8", "replace"))
+        except Exception:
+            return {"ok": False, "description": f"HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "description": f"{type(exc).__name__}: {exc}"}
+
+
+def parse_chat_ids(payload: dict) -> list[dict]:
+    """Pull unique chats out of a getUpdates payload (pure, unit tested)."""
+    seen, out = set(), []
+    for update in payload.get("result") or []:
+        if not isinstance(update, dict):
+            continue
+        for key in ("message", "edited_message", "channel_post", "my_chat_member"):
+            msg = update.get(key)
+            if not msg or "chat" not in msg:
+                continue
+            chat = msg["chat"]
+            cid = chat.get("id")
+            if cid is None or cid in seen:
+                continue
+            seen.add(cid)
+            out.append({
+                "chat_id": cid,
+                "name": chat.get("first_name") or chat.get("title") or chat.get("username") or "",
+                "type": chat.get("type", ""),
+            })
+    return out
+
+
+def detect_chat_id(token: str) -> tuple[Optional[int], str]:
+    """Ask Telegram who has messaged the bot. Returns (chat_id, human message)."""
+    payload = _get_json(f"https://api.telegram.org/bot{token}/getUpdates")
+    if not payload.get("ok"):
+        return None, payload.get("description", "Telegram svarade inte")
+    chats = parse_chat_ids(payload)
+    if not chats:
+        return None, ("Ingen chatt hittad. Skicka 'hej' till boten i Telegram "
+                      "och tryck Anslut igen.")
+    return chats[0]["chat_id"], f"Hittade chat {chats[0]['chat_id']} ({chats[0]['name']})"
+
+
+def upsert_env(path, values: dict) -> str:
+    """Write KEY=value into a .env file, keeping every other line untouched."""
+    import pathlib
+
+    path = pathlib.Path(path)
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    wanted = dict(values)
+
+    out, written = [], set()
+    for line in existing:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in wanted:
+            out.append(f"{key}={wanted[key]}")
+            written.add(key)
+        else:
+            out.append(line)
+
+    for key, value in wanted.items():
+        if key not in written:
+            out.append(f"{key}={value}")
+
+    path.write_text("\n".join(out).rstrip("\n") + "\n", encoding="utf-8")
+    return str(path)
+
+
+def apply_to_process(values: dict) -> None:
+    """Make the new settings live immediately, without a restart."""
+    for key, value in values.items():
+        os.environ[key] = str(value)
+
+
 # ---------------------------------------------------------------- dispatcher
 
 def channels() -> list[str]:

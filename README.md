@@ -50,6 +50,27 @@ python -m unittest discover -s tests -v                  # 18 tests
 No strategy can promise profit. Judge a setting by expectancy in R, profit
 factor and drawdown — and keep `DRY_RUN=true` until it holds up out of sample.
 
+## Connect Telegram from the phone (no file editing)
+
+The app can save the token for you and figure out the chat id itself:
+
+1. In Telegram: open your bot, send `hej`.
+2. In the app: **Inställningar → Telegram-signaler**, paste the token from
+   @BotFather, leave *Chat id* empty, tap **Anslut Telegram**.
+3. The server calls `getUpdates`, finds your chat, writes `.env` and sends a
+   test message. Done — no restart, no Notepad.
+
+Under **Scanner** there is also **Starta automatisk skanning** / **Stoppa**, which
+runs `scanner.py --loop …` on the machine that has MetaTrader 5.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /notify/status` | is Telegram/SMS configured, masked token, chat id |
+| `POST /notify/configure` | `{"token": "...", "chat_id": null}` → detect, save, test |
+| `GET /scanner/status` | running, pid, channels, log tail |
+| `POST /scanner/start` | `{"loop_seconds":300,"min_score":6,"timeframes":"5,15,60"}` |
+| `POST /scanner/stop` | stop the background scanner |
+
 ## Market scanner + Telegram/SMS alerts
 
 `scanner.py` walks every symbol in Market Watch, scores the setups on M5/M15/H1
