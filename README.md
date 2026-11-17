@@ -1,74 +1,169 @@
-# MT5 Mobile Bot Backend
+# Koppla mobilen till MT5-boten 📱
 
-Remote control for the supplied `mt5_scalper_bot.py` from your phone.
-A small FastAPI service runs next to MetaTrader 5 on Windows, serves a
-mobile web app, and shares start/stop/emergency state with the trading engine.
+Kort svar på det viktigaste först:
 
-**Svensk guide: [MOBIL.md](MOBIL.md)** — steg för steg från tom Windows-dator till
-boten i mobilen.
+> **MetaTrader 5-appen på mobilen kan inte köra Expert Advisors eller Python-botar.**
+> Boten måste köra på en Windows-dator (eller VPS) där MT5-desktop är installerat och inloggat.
+> Mobilen kan däremot **se kontot** (samma inloggning i MT5-appen) och **styra boten**
+> via den lilla webb-app som finns i det här repot.
 
-## Architecture
+Så här ser kedjan ut:
 
 ```
-Phone browser ──HTTP──► FastAPI (main.py) ──► SQLite (bot_state.db) ◄── mt5_scalper_bot.py
-                              │                                              │
-                              └────────────► MetaTrader5 Python ◄───────────┘
-                                                (Windows, logged in)
+ 📱 Telefonen (webbläsare)          🖥️ Windows-PC / VPS                 🏦 Broker
+ ─────────────────────────          ────────────────────                ────────
+ Web-app på http://IP:8000  ──►  FastAPI (main.py) + SQLite  ──►  MetaTrader5-Python
+ Start / Stopp / Nödstopp        mt5_scalper_bot.py (trading)     ──►  MT5-desktop (inloggad)
+ Saldo, positioner, logg         MT5-desktop (Algo Trading PÅ)    ──►  Demo-/livekonto
 ```
 
-* `main.py` – REST API + mobile web app (`web/index.html`)
-* `control.py` – shared flags/settings/audit log in SQLite
-* `mt5_scalper_bot.py` – trading engine; refuses to trade when stopped from the phone
-* `run_server.bat` / `run_bot.bat` – Windows launchers
+Ingen APK behövs, inget GitHub-bygge behövs. Det är en mobilanpassad webbsida som
+kan läggas på hemskärmen och beter sig som en app.
 
-## Run (Windows with MT5 installed)
+---
 
-1. Install Python 3.11+ and MetaTrader 5 desktop, log into a **DEMO** account.
-2. Double-click `run_server.bat`, then `run_bot.bat` (separate windows).
-3. Copy `.env.example` to `.env` if you want to change defaults; the API token is
-   generated into `.api_token` on first start.
-4. Open `http://<pc-ip>:8000` on the phone, paste the token, "Add to Home Screen".
+## 1. Förbered datorn
 
-Manual start:
+1. Windows 10/11 eller Windows VPS.
+2. Installera **MetaTrader 5 desktop** och logga in på ett **DEMO-konto**.
+3. Slå PÅ **Algo Trading** (grön knapp i verktygsfältet) — annars avvisas ordrar.
+4. Installera Python 3.11/3.12 (64-bit) och kryssa i *Add python.exe to PATH*.
+
+## 2. Starta servern
+
+Dubbelklicka `run_server.bat`. Första gången skapas `.venv`, beroenden installeras,
+och ett API-token genereras i filen `.api_token`.
+
+Eller manuellt:
 
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Linux/macOS (no MT5 available) still boots for UI/API development:
+Konfiguration i `.env`:
 
-```bash
-./serve.sh          # recreates .venv and installs deps if needed, then serves :8000
+| Variabel | Betydelse |
+|---|---|
+| `API_TOKEN` | Lösenordet som mobilen använder. Tomt = genereras automatiskt till `.api_token` |
+| `MT5_PATH` | Sökväg till `terminal64.exe` om auto-detektering misslyckas |
+| `DRY_RUN` | `true` = inga riktiga ordrar (börja alltid här) |
+| `SYMBOLS` | Symboler boten följer, t.ex. `EURUSD,XAUUSD` |
+| `DB_PATH` | SQLite-fil för start/stopp-status, inställningar och logg |
+
+På Linux/macOS (utan MT5) kan du starta API:t med `./serve.sh` för att testa
+gränssnittet — saldo och positioner visas då som `–` eftersom MT5 saknas.
+
+Starta sedan själva handelsmotorn i ett eget fönster:
+
+```bat
+run_bot.bat
 ```
 
-MT5 fields simply return `null` there, so the UI and API stay testable without
-Windows. On Windows keep using `run_server.bat`.
+Båda processerna måste köra på samma maskin — de delar `bot_state.db`, och det är
+den filen som gör att **Start/Stopp/Nödstopp på mobilen faktiskt påverkar boten**.
 
-## Endpoints
+## 3. Koppla mobilen (hemma, samma Wi-Fi)
 
-| Method | Path | Notes |
+1. Ta reda på datorns IP: `ipconfig` → *IPv4-adress*, t.ex. `192.168.1.42`.
+2. Öppna i mobilens webbläsare: `http://192.168.1.42:8000`
+3. Klistra in token från `.api_token` och tryck **Spara token**.
+4. Lägg till på hemskärmen:
+   - **iPhone/Safari:** Dela → *Lägg till på hemskärmen*
+   - **Android/Chrome:** Meny → *Lägg till på startskärmen*
+
+Tillåter Windows-brandväggen inte anslutningen: tillåt Python/port 8000 i
+*Windows Defender Firewall → Tillåt en app*.
+
+## 4. Koppla mobilen utifrån (när du inte är hemma)
+
+Öppna **aldrig** port 8000 direkt mot internet utan HTTPS. Enklaste säkra vägarna:
+
+| Lösning | Så gör du | Passar |
 |---|---|---|
-| GET | `/health` | Public |
-| GET | `/status` | Balance, equity, P/L, mode |
-| GET | `/positions` | Open positions |
-| POST | `/positions/{ticket}/close` | Close one position |
-| POST | `/positions/close-all` | `{"confirm":"CLOSE ALL"}` |
-| POST | `/bot/start` `/bot/stop` `/bot/emergency-stop` | Engine control |
-| GET/PUT | `/settings` | Persisted in SQLite |
-| GET | `/signals` | Indicator snapshot per symbol |
-| GET | `/history` | Audit log |
-| POST | `/paper-trade` | Simulated order |
+| **Tailscale** (rekommenderas) | Installera Tailscale på PC + mobil, logga in på samma konto, öppna `http://<tailscale-ip>:8000` | Privat, krypterat, ingen portöppning |
+| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:8000` → får en `https://…trycloudflare.com`-adress | Snabbt test, HTTPS |
+| **ngrok** | `ngrok http 8000` → `https://….ngrok-free.app` | Snabbt test, HTTPS |
+| Egen VPS + domän | Nginx/Caddy som reverse proxy med TLS | Produktion |
 
-Auth: `X-API-Token` header, `Authorization: Bearer <token>`, or `?token=<token>`.
-Swagger UI at `/docs`.
+Tips: sätt `CORS_ORIGINS` till din adress i stället för `*` när du är klar.
 
-## Before going live
+## 5. Se kontot i MT5-appen
 
-* Keep `DRY_RUN=true` until the whole loop is verified.
-* Never expose port 8000 without TLS — use Tailscale, Cloudflare Tunnel or a reverse proxy.
-* Add persistent daily-loss tracking (currently resets on restart), rotating tokens,
-  and a hard kill switch at the broker level.
-* No strategy guarantees profit; slippage, spread and outages cause losses.
+Installera **MetaTrader 5** från App Store / Google Play och logga in med **samma
+konto, server och lösenord** som på datorn. Där ser du botens trades, P/L och marginal
+i realtid — och kan stänga manuellt vid behov. Själva boten syns inte i appen.
+
+---
+
+## Vad du kan göra från mobilen
+
+| Knapp / vy | Vad den gör |
+|---|---|
+| **Starta** | Tillåter boten att leta nya setups (skriver `bot_running=1`) |
+| **Stoppa** | Stoppar nya ordrar, öppna positioner lämnas orörda |
+| **🚨 NÖDSTOPP** | Hård spärr — boten gör inget förrän du startar igen |
+| **Positioner** | Lista med P/L och **Stäng** per position |
+| **Stäng alla** | Kräver att du skriver `CLOSE ALL` |
+| **Signaler** | Senaste EMA/RSI/ATR-läget per symbol |
+| **Logg** | Allt som hänt: start/stopp, ordrar, stängningar |
+| **Inställningar** | Symboler, tidsram, risk, spread, cooldown, DRY RUN / LIVE |
+
+## API (om du vill bygga egen app senare)
+
+Alla endpoints kräver `X-API-Token`-header (eller `?token=`).
+
+| Metod | Väg | Beskrivning |
+|---|---|---|
+| GET | `/health` | Publik hälsokoll |
+| GET | `/status` | Saldo, equity, P/L, antal positioner, läge |
+| GET | `/positions` | Öppna positioner |
+| POST | `/positions/{ticket}/close` | Stäng en position |
+| POST | `/positions/close-all` | Stäng alla (`{"confirm":"CLOSE ALL"}`) |
+| POST | `/bot/start`, `/bot/stop`, `/bot/emergency-stop` | Styrning |
+| GET/PUT | `/settings` | Läs/spara inställningar |
+| GET | `/signals` | Indikator-/signalöversikt |
+| GET | `/history?limit=50` | Logg |
+| POST | `/paper-trade` | Demo-order till loggen |
+
+Interaktiv dokumentation: `http://<server>:8000/docs`
+
+---
+
+## Felsökning
+
+| Symptom | Åtgärd |
+|---|---|
+| `mt5_connected: false` / grå prick | MT5-desktop är inte startat eller inte inloggat på servern |
+| Sidan öppnas inte alls | Testa `http://<server>:8000/ping` i webbläsaren — får du `OK` fungerar servern |
+| `401 Invalid API token` | Token i mobilen ≠ `.api_token` / `API_TOKEN`. Logga ut i appen och klistra in igen |
+| Ordrar avvisas (`retcode 10027` m.fl.) | Algo Trading avstängt i MT5, eller för liten volym för symbolen |
+| Sidan laddar inte på mobilen | Fel IP, brandvägg, eller servern startad på `127.0.0.1` i stället för `0.0.0.0` |
+| Symbolen hittas inte | Många brokers har suffix, t.ex. `EURUSD.m` eller `EURUSDm` — använd exakt det namn som syns i MT5 Market Watch |
+| Ingenting händer efter Start | `run_bot.bat` körs inte, eller spread/ATR-filter stoppar alla trades (syns i loggen) |
+
+## Säkerhet & ansvar
+
+- Kör **DEMO** tills flödet fungerar. Byt till LIVE först när du förstår alla knappar.
+- Dela aldrig `.api_token`, `.env` eller kontouppgifter.
+- Sätt en **kill switch**-rutin: NÖDSTOPP + stäng MT5-terminalen.
+- Ingen strategi garanterar vinst. Slippage, spread, nyheter och avbrott kan ge förluster.
+
+---
+
+## Alternativ på GitHub (om du hellre vill bygga något färdigt)
+
+| Repo | Vad det är | Varför/varför inte |
+|---|---|---|
+| [dceoy/mt5api](https://github.com/dceoy/mt5api) | FastAPI-REST-API ovanpå MT5 (Windows) | Bra om du vill ha ett generellt API, inte en färdig mobil-UI |
+| [Fangteng-developer/metatrader5-pro](https://github.com/Fangteng-developer/metatrader5-pro) | Android-app (Kotlin/Compose) + FastAPI-brygga | Riktig APK, men du måste bygga den i Android Studio |
+| [huy-bui-tech/mt5_api](https://github.com/huy-bui-tech/mt5_api) | Socket-brygga Python (Linux) ↔ MT5-EA (Windows) | Om boten ska köra på Linux i stället för Windows |
+| [zolacdo/trader-Pilot](https://github.com/zolacdo/trader-Pilot) | Flutter-app som fjärrkontroll till en brygga | Kräver Flutter SDK + Firebase |
+| [Shifrozy/Telegram-to-mt5-bridge](https://github.com/Shifrozy/Telegram-to-mt5-bridge) | Styr MT5 via Telegram-kommandon | Enklast av allt, men mindre överskådligt än en web-app |
+
+Slutsats: att bygga en egen APK är onödigt arbete för det här syftet — den här
+web-appen ger samma sak, fungerar på iPhone och Android, och uppdateras direkt när
+du ändrar i `web/index.html`.

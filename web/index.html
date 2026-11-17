@@ -84,9 +84,18 @@
   <label for="token">Token</label>
   <input id="token" type="password" autocomplete="off" placeholder="klistra in token" />
   <div style="margin-top:12px"><button class="primary" id="saveToken">Spara token</button></div>
+  <div style="margin-top:10px"><button class="ghost" id="gateLater">Visa utan token (läsläge)</button></div>
 </section>
 
 <main id="app" class="hide">
+
+  <div id="readOnly" class="card hide" style="border-color:var(--amber)">
+    <strong style="color:var(--amber)">Läsläge</strong>
+    <div class="muted" style="margin-top:4px">
+      Servern kör utan MetaTrader 5, så saldo och positioner visas som <b>–</b>.
+      Klistra in API-token under <b>Inställningar</b> för att kunna styra boten.
+    </div>
+  </div>
 
   <!-- OVERVIEW -->
   <section data-tab="home">
@@ -232,7 +241,7 @@ async function api(path, opts = {}) {
     ...opts,
     headers: { "Content-Type": "application/json", "X-API-Token": token, ...(opts.headers || {}) },
   });
-  if (res.status === 401) { showGate(); throw new Error("401"); }
+  if (res.status === 401) throw new Error("Token krävs – klistra in den i Inställningar");
   if (!res.ok) {
     let msg = res.status + "";
     try { const j = await res.json(); msg = j.detail || JSON.stringify(j); } catch (e) {}
@@ -263,6 +272,7 @@ function showApp() {
 async function refreshStatus() {
   try {
     const s = await api("/status");
+    $("readOnly").classList.toggle("hide", !s.public_read_only);
     $("conn").className = "dot " + (s.mt5_connected ? "on" : "off");
     $("sub").textContent = s.mt5_connected
       ? `MT5 ansluten · ${s.server || ""} · uppdaterad ${new Date().toLocaleTimeString("sv-SE")}`
@@ -278,8 +288,12 @@ async function refreshStatus() {
     $("account").textContent = s.login ? "#" + s.login : "–";
     $("btnStart").disabled = s.running && !s.emergency_stop;
     $("btnStop").disabled = !s.running;
+    return true;
   } catch (e) {
-    if (e.message !== "401") { $("conn").className = "dot off"; $("sub").textContent = "Serverfel: " + e.message; }
+    if (e.message.indexOf("Token") !== -1) { showGate(); return false; }
+    $("conn").className = "dot off";
+    $("sub").textContent = "Serverfel: " + e.message;
+    return false;
   }
 }
 
@@ -338,6 +352,11 @@ async function closeOne(ticket) {
   catch (e) { toast("Fel: " + e.message, 4000); }
   loadPositions(); refreshStatus();
 }
+
+$("gateLater").onclick = async () => {
+  const ok = await refreshStatus();
+  if (ok) { showApp(); loadPositions(); } else { toast("Läsläge är inte tillgängligt utan token"); }
+};
 
 $("saveToken").onclick = async () => {
   token = $("token").value.trim();
@@ -419,17 +438,17 @@ document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.
 
 (async function init() {
   $("s_timeframe").innerHTML = TF.map((t) => `<option value="${t}">M${t}</option>`).join("");
-  if (!token) return showGate();
+
+  const ok = await refreshStatus();
+  if (!ok) { showGate(); return; }
+
   showApp();
-  await refreshStatus();
-  if (!$("app").classList.contains("hide")) {
-    loadPositions();
-    timer = setInterval(() => {
-      if (document.hidden) return;
-      refreshStatus();
-      if (document.querySelector('[data-tab="pos"]').classList.contains("hide") === false) loadPositions();
-    }, 5000);
-  }
+  loadPositions();
+  timer = setInterval(() => {
+    if (document.hidden) return;
+    refreshStatus();
+    if (!document.querySelector('[data-tab="pos"]').classList.contains("hide")) loadPositions();
+  }, 5000);
 })();
 </script>
 </body>

@@ -46,6 +46,12 @@ except Exception:  # pragma: no cover
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 
+# Read-only access without a token, only where there is no MT5 at all
+# (Linux/macOS preview + UI development). Never True on a Windows trading box.
+PUBLIC_READ_ONLY = (not MT5_IMPORTED) and os.getenv(
+    "PUBLIC_READ_ONLY", "true"
+).strip().lower() in {"1", "true", "yes"}
+
 DEFAULT_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD"]
 
 
@@ -109,18 +115,43 @@ def current_settings() -> BotSettings:
 
 # ---------------------------------------------------------------- auth
 
+def _supplied_token(x_api_token, authorization, token) -> Optional[str]:
+    supplied = x_api_token or token
+    if not supplied and authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    return supplied
+
+
 def auth(
     x_api_token: Optional[str] = Header(default=None),
     authorization: Optional[str] = Header(default=None),
     token: Optional[str] = Query(default=None, description="Fallback for simple mobile clients"),
 ) -> None:
-    supplied = x_api_token or token
-    if not supplied and authorization and authorization.lower().startswith("bearer "):
-        supplied = authorization[7:].strip()
+    supplied = _supplied_token(x_api_token, authorization, token)
     if not supplied or not API_TOKEN:
         raise HTTPException(401, "Missing API token")
     if not hmac.compare_digest(supplied, API_TOKEN):
         raise HTTPException(401, "Invalid API token")
+
+
+def auth_read(
+    x_api_token: Optional[str] = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+    token: Optional[str] = Query(default=None),
+) -> None:
+    """Auth for read endpoints.
+
+    Without a MetaTrader5 install (Linux/macOS preview, CI, UI development)
+    there is no account data to protect, so reads are open and the settings
+    screen can be inspected. On Windows PUBLIC_READ_ONLY is False and this is
+    exactly as strict as `auth`.
+    """
+    if PUBLIC_READ_ONLY:
+        supplied = _supplied_token(x_api_token, authorization, token)
+        if supplied:
+            auth(x_api_token, authorization, token)  # a wrong token still fails
+        return
+    auth(x_api_token, authorization, token)
 
 
 # ---------------------------------------------------------------- MT5 helpers
@@ -227,6 +258,14 @@ def index():
     return FileResponse(WEB_DIR / "index.html")
 
 
+@app.get("/ping", include_in_schema=False)
+def ping():
+    """Plain-text check: if this opens, the server and preview tunnel work."""
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(f"OK - MT5 Mobile Bot API is running. public_read_only={PUBLIC_READ_ONLY}")
+
+
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def manifest():
     return JSONResponse({
@@ -250,7 +289,7 @@ def icon():
 @app.get("/status")
 def status(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
            authorization: Optional[str] = Header(default=None)):
-    auth(x_api_token, authorization, token)
+    auth_read(x_api_token, authorization, token)
     info = account_info()
     rows = position_rows()
     flags = control.get_flags()
@@ -268,6 +307,7 @@ def status(x_api_token: Optional[str] = Header(default=None), token: Optional[st
         "profit": float(sum(p["profit"] for p in rows)),
         "open_positions": len(rows),
         "mt5_connected": mt5_available(),
+        "public_read_only": PUBLIC_READ_ONLY,
         "time": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -275,7 +315,7 @@ def status(x_api_token: Optional[str] = Header(default=None), token: Optional[st
 @app.get("/positions")
 def positions(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
               authorization: Optional[str] = Header(default=None)):
-    auth(x_api_token, authorization, token)
+    auth_read(x_api_token, authorization, token)
     return position_rows()
 
 
@@ -344,7 +384,7 @@ def emergency_stop(x_api_token: Optional[str] = Header(default=None), token: Opt
 @app.get("/settings")
 def get_settings(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
                  authorization: Optional[str] = Header(default=None)):
-    auth(x_api_token, authorization, token)
+    auth_read(x_api_token, authorization, token)
     return current_settings().model_dump()
 
 
@@ -364,7 +404,7 @@ def update_settings(body: BotSettings, x_api_token: Optional[str] = Header(defau
 @app.get("/signals")
 def signals(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
             authorization: Optional[str] = Header(default=None)):
-    auth(x_api_token, authorization, token)
+    auth_read(x_api_token, authorization, token)
     settings = current_settings()
     try:
         import mt5_scalper_bot as bot
@@ -404,7 +444,7 @@ def signals(x_api_token: Optional[str] = Header(default=None), token: Optional[s
 @app.get("/history")
 def history(limit: int = 50, x_api_token: Optional[str] = Header(default=None),
             token: Optional[str] = None, authorization: Optional[str] = Header(default=None)):
-    auth(x_api_token, authorization, token)
+    auth_read(x_api_token, authorization, token)
     return control.recent_events(limit)
 
 
