@@ -153,7 +153,11 @@ och förklaras i [RESEARCH.md](RESEARCH.md).
 
 ## Få signaler i Telegram eller SMS
 
-**Snabbvägen — allt från telefonen:**
+**Snabbast på datorn:** dubbelklicka `start_bot.bat`, klistra in token en gång,
+tryck Enter. Den hittar chat id, sparar och startar skanningen. Vill du bara se
+status: dubbelklicka `check_signals.bat`.
+
+**Om du hellre gör det från telefonen:**
 1. Öppna din bot i Telegram och skicka `hej`.
 2. I mobil-appen: **Inställningar → Telegram-signaler**.
 3. Klistra in bot-token från @BotFather. Lämna *Chat id* tomt.
