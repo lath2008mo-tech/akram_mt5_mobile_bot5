@@ -54,6 +54,9 @@ Konfiguration i `.env`:
 | `SYMBOLS` | Symboler boten följer, t.ex. `EURUSD,XAUUSD` |
 | `DB_PATH` | SQLite-fil för start/stopp-status, inställningar och logg |
 
+På Linux/macOS (utan MT5) kan du starta API:t med `./serve.sh` för att testa
+gränssnittet — saldo och positioner visas då som `–` eftersom MT5 saknas.
+
 Starta sedan själva handelsmotorn i ett eget fönster:
 
 ```bat

@@ -39,7 +39,13 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Linux/macOS (no MT5 available) still boots for UI/API development:
-`uvicorn main:app --host 0.0.0.0 --port 8000` — MT5 fields simply return `null`.
+
+```bash
+./serve.sh          # recreates .venv and installs deps if needed, then serves :8000
+```
+
+MT5 fields simply return `null` there, so the UI and API stay testable without
+Windows. On Windows keep using `run_server.bat`.
 
 ## Endpoints
 
