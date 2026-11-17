@@ -190,13 +190,35 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const TF = [1,2,3,4,5,6,10,12,15,20,30];
-let token = localStorage.getItem("mt5_token") || "";
 let timer = null;
+
+// Storage can throw when the page runs inside a sandboxed iframe
+// (some browsers block localStorage in third-party contexts). Fall back to
+// memory so the UI never ends up as a blank page.
+const mem = {};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return mem[k] ?? null; } },
+  set(k, v) { mem[k] = v; try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { delete mem[k]; try { localStorage.removeItem(k); } catch (e) {} },
+};
+
+let token = store.get("mt5_token") || "";
 
 // token via ?token=... (praktiskt när man öppnar länken på mobilen)
 const urlToken = new URLSearchParams(location.search).get("token");
-if (urlToken) { token = urlToken; localStorage.setItem("mt5_token", token);
-  history.replaceState({}, "", location.pathname); }
+if (urlToken) {
+  token = urlToken;
+  store.set("mt5_token", token);
+  try { history.replaceState({}, "", location.pathname); } catch (e) {}
+}
+
+window.addEventListener("error", (e) => {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = "UI-fel: " + (e.message || "okänt fel");
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+});
 
 function toast(msg, ms = 2600) {
   const el = document.createElement("div");
@@ -320,15 +342,15 @@ async function closeOne(ticket) {
 $("saveToken").onclick = async () => {
   token = $("token").value.trim();
   if (!token) return;
-  localStorage.setItem("mt5_token", token);
+  store.set("mt5_token", token);
   showApp(); await refreshStatus();
   if ($("conn").className.includes("off") && $("sub").textContent.includes("Serverfel")) {
-    localStorage.removeItem("mt5_token"); showGate(); toast("Token avvisades av servern");
+    store.del("mt5_token"); showGate(); toast("Token avvisades av servern");
   } else { toast("Token sparad"); }
 };
 $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("saveToken").click(); });
 $("refresh").onclick = () => { refreshStatus(); loadPositions(); };
-$("btnLogout").onclick = () => { localStorage.removeItem("mt5_token"); token = ""; showGate(); };
+$("btnLogout").onclick = () => { store.del("mt5_token"); token = ""; showGate(); };
 
 $("btnStart").onclick = async () => {
   try { await api("/bot/start", { method: "POST" }); toast("Boten startad"); } catch (e) { toast("Fel: " + e.message); }
