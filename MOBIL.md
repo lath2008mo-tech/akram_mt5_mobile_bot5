@@ -153,6 +153,16 @@ och förklaras i [RESEARCH.md](RESEARCH.md).
 
 ## Få signaler i Telegram eller SMS
 
+**Snabbvägen — allt från telefonen:**
+1. Öppna din bot i Telegram och skicka `hej`.
+2. I mobil-appen: **Inställningar → Telegram-signaler**.
+3. Klistra in bot-token från @BotFather. Lämna *Chat id* tomt.
+4. Tryck **Anslut Telegram**. Servern hittar din chatt själv, sparar inställningen
+   och skickar ett testmeddelande. Klart — ingen fil, ingen omstart.
+5. Fliken **Scanner** → **Starta automatisk skanning** (körs på datorn med MT5).
+
+**Manuellt (om du hellre vill):**
+
 Boten kan skanna hela marknaden och skicka **entry, SL, TP och R:R** till dig.
 
 **Telegram (gratis, rekommenderas):**

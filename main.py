@@ -19,6 +19,8 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -514,6 +516,188 @@ def scan_market(min_score: int = 5, timeframes: str = "5,15,60",
     return {"mt5": True, "symbols": len(symbol_list),
             "timeframes": tf_list, "min_score": min_score,
             "signals": payload, "pushed": len(fresh)}
+
+
+# ---------------------------------------------------------------- scanner control
+
+_scanner_proc: Optional[subprocess.Popen] = None
+SCANNER_LOG = BASE_DIR / "scanner.log"
+
+
+def _scanner_running() -> bool:
+    global _scanner_proc
+    if _scanner_proc is not None and _scanner_proc.poll() is None:
+        return True
+    pid = control.get("scanner_pid")
+    if pid:
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except (OSError, ValueError):
+            pass
+    return False
+
+
+def _log_tail(lines: int = 15) -> list[str]:
+    try:
+        data = SCANNER_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+        return data[-lines:]
+    except Exception:
+        return []
+
+
+class ScanStart(BaseModel):
+    loop_seconds: int = Field(300, ge=30, le=3600)
+    min_score: int = Field(6, ge=2, le=9)
+    timeframes: str = "5,15,60"
+    notify: bool = True
+
+
+@app.get("/scanner/status")
+def scanner_status(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
+                   authorization: Optional[str] = Header(default=None)):
+    auth_read(x_api_token, authorization, token)
+    return {"running": _scanner_running(), "pid": control.get("scanner_pid"),
+            "channels": notify.channels(), "log": _log_tail()}
+
+
+@app.post("/scanner/start")
+def scanner_start(body: ScanStart, x_api_token: Optional[str] = Header(default=None),
+                  token: Optional[str] = None,
+                  authorization: Optional[str] = Header(default=None)):
+    global _scanner_proc
+    auth(x_api_token, authorization, token)
+
+    if not MT5_IMPORTED:
+        raise HTTPException(
+            503,
+            "MetaTrader 5 finns inte på den här maskinen. Starta skannern på "
+            "Windows-datorn där MT5 är inloggat.",
+        )
+    if _scanner_running():
+        return {"running": True, "pid": control.get("scanner_pid"), "message": "Redan igång"}
+
+    cmd = [sys.executable, str(BASE_DIR / "scanner.py"),
+           "--loop", str(body.loop_seconds),
+           "--min-score", str(body.min_score),
+           "--timeframes", body.timeframes]
+    if body.notify:
+        cmd.append("--notify")
+
+    try:
+        log_file = open(SCANNER_LOG, "ab")
+        _scanner_proc = subprocess.Popen(cmd, cwd=str(BASE_DIR),
+                                         stdout=log_file, stderr=subprocess.STDOUT)
+    except Exception as exc:
+        raise HTTPException(500, f"Kunde inte starta skannern: {exc}")
+
+    control.set("scanner_pid", _scanner_proc.pid)
+    control.log_event("SCANNER_START", message=(
+        f"loop={body.loop_seconds}s min_score={body.min_score} "
+        f"tf={body.timeframes} notify={body.notify}"))
+    return {"running": True, "pid": _scanner_proc.pid,
+            "message": f"Skannern kör var {body.loop_seconds}:e sekund"}
+
+
+@app.post("/scanner/stop")
+def scanner_stop(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    global _scanner_proc
+    auth(x_api_token, authorization, token)
+
+    stopped = False
+    if _scanner_proc is not None and _scanner_proc.poll() is None:
+        _scanner_proc.terminate()
+        try:
+            _scanner_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _scanner_proc.kill()
+        stopped = True
+        _scanner_proc = None
+
+    pid = control.get("scanner_pid")
+    if pid and not stopped:
+        try:
+            os.kill(int(pid), 15)
+            stopped = True
+        except OSError:
+            pass
+
+    control.set("scanner_pid", "")
+    control.log_event("SCANNER_STOP", message="Skanner stoppad från mobilen")
+    return {"running": False, "stopped": stopped}
+
+
+# ---------------------------------------------------------------- channel setup
+
+class NotifyConfig(BaseModel):
+    token: str = Field(..., description="Telegram bot token from @BotFather")
+    chat_id: Optional[str] = Field(None, description="Leave empty to detect it automatically")
+    channel: str = Field("telegram", description="telegram or sms")
+
+
+@app.get("/notify/status")
+def notify_status(x_api_token: Optional[str] = Header(default=None), token: Optional[str] = None,
+                  authorization: Optional[str] = Header(default=None)):
+    auth_read(x_api_token, authorization, token)
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    return {
+        "channels": notify.channels(),
+        "telegram": {
+            "configured": notify.telegram_configured(),
+            "chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+            "token_preview": (tg_token[:8] + "…" + tg_token[-4:]) if tg_token else "",
+        },
+        "sms": {"configured": notify.sms_configured()},
+    }
+
+
+@app.post("/notify/configure")
+def notify_configure(body: NotifyConfig, x_api_token: Optional[str] = Header(default=None),
+                     token: Optional[str] = None,
+                     authorization: Optional[str] = Header(default=None)):
+    """Save the Telegram token from the phone and figure out the chat id.
+
+    One paste + one tap, no file editing and no restart.
+    """
+    auth(x_api_token, authorization, token)
+
+    tg_token = notify.normalize_token(body.token)
+    if not notify.token_looks_valid(tg_token):
+        raise HTTPException(400, "Det ser inte ut som en Telegram-token "
+                                 "(ska vara siffror:lång sträng från @BotFather).")
+
+    chat_id = notify.normalize_token(body.chat_id or "")
+    detected = ""
+    if not chat_id:
+        found, message = notify.detect_chat_id(tg_token)
+        detected = message
+        if found is None:
+            # keep the token anyway so the user only has to press again
+            notify.upsert_env(BASE_DIR / ".env", {"TELEGRAM_BOT_TOKEN": tg_token})
+            notify.apply_to_process({"TELEGRAM_BOT_TOKEN": tg_token})
+            return {"ok": False, "saved_token": True, "chat_id": None,
+                    "message": message}
+        chat_id = str(found)
+
+    path = notify.upsert_env(BASE_DIR / ".env", {
+        "TELEGRAM_BOT_TOKEN": tg_token,
+        "TELEGRAM_CHAT_ID": chat_id,
+        "NOTIFY_CHANNELS": "telegram",
+    })
+    notify.apply_to_process({
+        "TELEGRAM_BOT_TOKEN": tg_token,
+        "TELEGRAM_CHAT_ID": chat_id,
+        "NOTIFY_CHANNELS": "telegram",
+    })
+
+    test = notify.send("✅ MT5-boten är ansluten. Nu kommer signalerna hit.")
+    ok = all(r.ok for r in test) if test else False
+    control.log_event("NOTIFY_SETUP", message=f"Telegram chat {chat_id} konfigurerad")
+    return {"ok": ok, "chat_id": chat_id, "detected": detected, "env": path,
+            "message": ("Klart! Testmeddelande skickat." if ok else
+                        "Sparat, men testmeddelandet gick inte fram. Kolla chat id."),
+            "results": [{"channel": r.channel, "ok": r.ok, "detail": r.detail} for r in test]}
 
 
 @app.post("/notify/test")

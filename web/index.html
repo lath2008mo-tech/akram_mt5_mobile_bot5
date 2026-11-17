@@ -174,6 +174,11 @@
         <button class="primary" id="sc_run">Skanna marknaden</button>
         <button class="ghost" id="sc_test">Testa notiser</button>
       </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="sc_start">▶ Starta automatisk skanning</button>
+        <button class="warn" id="sc_stop">■ Stoppa</button>
+      </div>
+      <div class="muted" style="margin-top:8px" id="sc_state">Status: –</div>
       <div class="muted" style="margin-top:8px" id="sc_note">
         Skannar alla symboler i Market Watch och visar entry, SL och TP.
       </div>
@@ -214,6 +219,19 @@
       </select>
       <div style="margin-top:14px"><button class="primary" id="btnSaveSettings">Spara inställningar</button></div>
       <div style="margin-top:10px"><button class="ghost" id="btnLogout">Logga ut (glöm token)</button></div>
+    </div>
+
+    <div class="card">
+      <strong>Telegram-signaler</strong>
+      <div class="muted" style="margin-top:4px" id="tg_status">Kontrollerar…</div>
+      <label for="tg_token">Bot-token från @BotFather</label>
+      <input id="tg_token" type="password" autocomplete="off" placeholder="123456789:AAF…" />
+      <label for="tg_chat">Chat id (lämna tomt – hittas automatiskt)</label>
+      <input id="tg_chat" inputmode="numeric" autocomplete="off" placeholder="123456789" />
+      <div class="muted" style="margin-top:6px">
+        Skicka först <b>hej</b> till din bot i Telegram, tryck sedan Anslut.
+      </div>
+      <div style="margin-top:12px"><button class="primary" id="tg_connect">Anslut Telegram</button></div>
     </div>
   </section>
 
@@ -324,7 +342,19 @@ function demoResponse(path) {
   if (path.startsWith("/history")) return DEMO.history;
   if (path.startsWith("/signals")) return DEMO.signals;
   if (path.startsWith("/scan")) return DEMO.scan;
+  if (path.startsWith("/notify/status")) return {
+    channels: ["demo"],
+    telegram: { configured: false, chat_id: "", token_preview: "" },
+    sms: { configured: false },
+  };
+  if (path.startsWith("/notify/configure")) return {
+    ok: true, chat_id: "123456789", message: "Demo: token sparad (inget skickat)",
+  };
   if (path.startsWith("/notify")) return { ok: true, channels: ["demo"], message: "Demo: notiser av" };
+  if (path.startsWith("/scanner/status")) return {
+    running: false, pid: null, channels: ["demo"], log: [],
+  };
+  if (path.startsWith("/scanner/")) return { running: true, message: "Demo: skanner startad" };
   return { ok: true };
 }
 
@@ -589,6 +619,70 @@ function renderScan(r) {
   }).join("");
 }
 
+async function loadNotifyStatus() {
+  try {
+    const s = await api("/notify/status");
+    const tg = s.telegram || {};
+    $("tg_status").textContent = tg.configured
+      ? `Ansluten · chat ${tg.chat_id} · token ${tg.token_preview}`
+      : "Inte ansluten än — klistra in token och tryck Anslut.";
+    if (tg.chat_id) $("tg_chat").value = tg.chat_id;
+  } catch (e) {
+    $("tg_status").textContent = "Kunde inte läsa status: " + e.message;
+  }
+}
+
+async function connectTelegram() {
+  const token = $("tg_token").value.trim();
+  if (!token) { toast("Klistra in bot-token först"); return; }
+  $("tg_status").textContent = "Ansluter…";
+  try {
+    const r = await api("/notify/configure", {
+      method: "POST",
+      body: JSON.stringify({ token, chat_id: $("tg_chat").value.trim() || null }),
+    });
+    $("tg_status").textContent = r.message;
+    toast(r.message, 5000);
+    if (r.chat_id) $("tg_chat").value = r.chat_id;
+    loadNotifyStatus();
+  } catch (e) {
+    $("tg_status").textContent = "Fel: " + e.message;
+    toast("Fel: " + e.message, 5000);
+  }
+}
+
+async function scannerState() {
+  try {
+    const s = await api("/scanner/status");
+    $("sc_state").textContent = s.running
+      ? `Kör (pid ${s.pid}) · kanaler: ${(s.channels || []).join(", ") || "inga"}`
+      : "Stoppad · starta för att få signaler automatiskt";
+    $("sc_start").disabled = s.running;
+  } catch (e) {
+    $("sc_state").textContent = "Status: " + e.message;
+  }
+}
+
+async function scannerStart() {
+  try {
+    const r = await api("/scanner/start", {
+      method: "POST",
+      body: JSON.stringify({ loop_seconds: 300, min_score: Number($("sc_min").value),
+                             timeframes: $("sc_tf").value.trim() || "5,15,60", notify: true }),
+    });
+    toast(r.message || "Skannern startad", 4500);
+  } catch (e) {
+    toast("Fel: " + e.message, 5000);
+  }
+  scannerState();
+}
+
+async function scannerStop() {
+  try { await api("/scanner/stop", { method: "POST" }); toast("Skannern stoppad"); }
+  catch (e) { toast("Fel: " + e.message, 4000); }
+  scannerState();
+}
+
 async function testNotify() {
   try {
     const r = await api("/notify/test", { method: "POST" });
@@ -603,15 +697,19 @@ function go(tab) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.go === tab));
   if (tab === "pos") loadPositions();
   if (tab === "log") loadHistory();
-  if (tab === "set") loadSettings();
+  if (tab === "set") { loadSettings(); loadNotifyStatus(); }
   if (tab === "scan" && !$("scanList").dataset.loaded) {
     $("scanList").dataset.loaded = "1";
     runScan();
+    scannerState();
   }
 }
 document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.dataset.go); });
 $("sc_run").onclick = runScan;
 $("sc_test").onclick = testNotify;
+$("sc_start").onclick = scannerStart;
+$("sc_stop").onclick = scannerStop;
+$("tg_connect").onclick = connectTelegram;
 
 (async function init() {
   $("s_timeframe").innerHTML = TF.map((t) => `<option value="${t}">M${t}</option>`).join("");
