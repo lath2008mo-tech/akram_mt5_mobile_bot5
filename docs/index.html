@@ -154,6 +154,33 @@
     </div>
   </section>
 
+  <!-- SCANNER -->
+  <section data-tab="scan" class="hide">
+    <div class="card">
+      <div class="row">
+        <div><label style="margin-top:0">Minsta poäng</label>
+          <select id="sc_min">
+            <option value="4">4 – många</option>
+            <option value="5" selected>5 – balanserad</option>
+            <option value="6">6 – få, starka</option>
+            <option value="7">7 – mycket få</option>
+          </select>
+        </div>
+        <div><label style="margin-top:0">Tidsramar</label>
+          <input id="sc_tf" value="5,15,60" inputmode="numeric" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="sc_run">Skanna marknaden</button>
+        <button class="ghost" id="sc_test">Testa notiser</button>
+      </div>
+      <div class="muted" style="margin-top:8px" id="sc_note">
+        Skannar alla symboler i Market Watch och visar entry, SL och TP.
+      </div>
+    </div>
+    <div id="scanList"></div>
+  </section>
+
   <!-- LOG -->
   <section data-tab="log" class="hide">
     <div class="card" id="history"><div class="muted">Ingen historik än.</div></div>
@@ -196,6 +223,7 @@
   <button data-go="home" class="active">Översikt</button>
   <button data-go="pos">Positioner</button>
   <button data-go="sig">Signaler</button>
+  <button data-go="scan">Scanner</button>
   <button data-go="log">Logg</button>
   <button data-go="set">Inställningar</button>
 </nav>
@@ -273,6 +301,20 @@ const DEMO = {
     { symbol: "EURUSD", signal: "BUY", rsi: 61.4, atr: 0.00042, close: 1.08710 },
     { symbol: "XAUUSD", signal: "NONE", rsi: 48.9, atr: 3.81, close: 2347.55 },
   ],
+  scan: {
+    mt5: true, symbols: 14, min_score: 5, pushed: 0, timeframes: [5, 15, 60],
+    signals: [
+      { symbol: "XAUUSD", timeframe: "M15", side: "SELL", entry: 2347.80, sl: 2352.60,
+        tp: 2338.20, rr: 2.0, score: 6, max_score: 9, regime: "trend_down",
+        reasons: ["breakdown below range", "DI- dominant", "RSI momentum"] },
+      { symbol: "EURUSD", timeframe: "M5", side: "BUY", entry: 1.08712, sl: 1.08540,
+        tp: 1.09056, rr: 2.0, score: 5, max_score: 9, regime: "trend_up",
+        reasons: ["EMA-stack up", "pullback to EMA20 reclaimed"] },
+      { symbol: "GBPUSD", timeframe: "H1", side: "BUY", entry: 1.27140, sl: 1.26890,
+        tp: 1.27640, rr: 2.0, score: 5, max_score: 9, regime: "trend_up",
+        reasons: ["above HTF EMA", "breakout above range"] },
+    ],
+  },
 };
 
 function demoResponse(path) {
@@ -281,6 +323,8 @@ function demoResponse(path) {
   if (path.startsWith("/settings")) return DEMO.settings;
   if (path.startsWith("/history")) return DEMO.history;
   if (path.startsWith("/signals")) return DEMO.signals;
+  if (path.startsWith("/scan")) return DEMO.scan;
+  if (path.startsWith("/notify")) return { ok: true, channels: ["demo"], message: "Demo: notiser av" };
   return { ok: true };
 }
 
@@ -495,14 +539,79 @@ $("btnSaveSettings").onclick = async () => {
   refreshStatus();
 };
 
+async function runScan() {
+  const minScore = $("sc_min").value;
+  const tfs = $("sc_tf").value.trim() || "5,15,60";
+  $("sc_note").textContent = "Skannar…";
+  try {
+    const r = await api(`/scan?min_score=${minScore}&timeframes=${encodeURIComponent(tfs)}`);
+    renderScan(r);
+  } catch (e) {
+    $("sc_note").textContent = "Fel: " + e.message;
+  }
+}
+
+function renderScan(r) {
+  const list = $("scanList");
+  const rows = (r.signals || []).filter((s) => (s.score || 0) >= Number($("sc_min").value));
+
+  if (!r.mt5) {
+    $("sc_note").textContent = r.note || "MT5 är inte ansluten på servern.";
+  } else {
+    $("sc_note").textContent =
+      `${r.signals.length} setups på ${r.symbols} symboler · ${r.updated ? "" : ""}` +
+      `min ${r.min_score} poäng · ${new Date().toLocaleTimeString("sv-SE")}`;
+  }
+
+  if (!rows.length) {
+    list.innerHTML = '<div class="card"><div class="muted">Inga setups just nu — ' +
+      'det är normalt, de flesta timmar har inget A-läge.</div></div>';
+    return;
+  }
+
+  list.innerHTML = rows.map((s) => {
+    const buy = s.side === "BUY";
+    return `<div class="pos">
+      <div class="top">
+        <strong>${s.symbol} <span class="muted">${s.timeframe}</span></strong>
+        <span class="badge ${buy ? "buy" : "sell"}">${s.side}</span>
+      </div>
+      <table style="margin-top:6px">
+        <tr><td class="muted">Entry</td><td><b>${s.entry}</b></td>
+            <td class="muted">R:R</td><td>1:${s.rr}</td></tr>
+        <tr><td class="muted">SL</td><td>${s.sl}</td>
+            <td class="muted">TP</td><td>${s.tp}</td></tr>
+      </table>
+      <div class="muted" style="margin-top:6px">
+        ${s.score}/${s.max_score} poäng · ${s.regime}${s.reasons && s.reasons.length ? " · " + s.reasons.slice(0,3).join(", ") : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function testNotify() {
+  try {
+    const r = await api("/notify/test", { method: "POST" });
+    toast(r.message || (r.ok ? "Test skickat" : "Ingen kanal konfigurerad"), 4500);
+  } catch (e) {
+    toast("Fel: " + e.message, 4000);
+  }
+}
+
 function go(tab) {
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hide", s.dataset.tab !== tab));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.go === tab));
   if (tab === "pos") loadPositions();
   if (tab === "log") loadHistory();
   if (tab === "set") loadSettings();
+  if (tab === "scan" && !$("scanList").dataset.loaded) {
+    $("scanList").dataset.loaded = "1";
+    runScan();
+  }
 }
 document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => go(b.dataset.go); });
+$("sc_run").onclick = runScan;
+$("sc_test").onclick = testNotify;
 
 (async function init() {
   $("s_timeframe").innerHTML = TF.map((t) => `<option value="${t}">M${t}</option>`).join("");
