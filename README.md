@@ -50,6 +50,32 @@ python -m unittest discover -s tests -v                  # 18 tests
 No strategy can promise profit. Judge a setting by expectancy in R, profit
 factor and drawdown — and keep `DRY_RUN=true` until it holds up out of sample.
 
+## Market scanner + Telegram/SMS alerts
+
+`scanner.py` walks every symbol in Market Watch, scores the setups on M5/M15/H1
+with the *same* decision code as the bot, and pushes the best ones with entry,
+SL, TP and R:R.
+
+```bash
+python scanner.py --once                     # one pass, table in the console
+python scanner.py --loop 300 --notify       # every 5 min, push new setups
+python scanner.py --symbols EURUSD,XAUUSD --min-score 6 --once --notify
+```
+
+In the phone app: **Scanner** tab → *Skanna marknaden*, and *Testa notiser*.
+
+Channels (`.env`, all optional):
+
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | free, instant, recommended |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `SMS_TO` | SMS, costs per message |
+| `NOTIFY_CHANNELS` | `telegram,sms` to pick; empty = everything configured |
+| `SCAN_MIN_SCORE`, `SCAN_TIMEFRAMES`, `SCAN_MAX_SYMBOLS` | what counts as an A-setup |
+
+Each setup is announced once per symbol/timeframe/direction/candle — no spam
+every polling loop. Nothing is executed: these are signals, you decide.
+
 ## Run (Windows with MT5 installed)
 
 1. Install Python 3.11+ and MetaTrader 5 desktop, log into a **DEMO** account.
@@ -89,6 +115,8 @@ Windows. On Windows keep using `run_server.bat`.
 | POST | `/bot/start` `/bot/stop` `/bot/emergency-stop` | Engine control |
 | GET/PUT | `/settings` | Persisted in SQLite |
 | GET | `/signals` | Indicator + regime snapshot per symbol |
+| GET | `/scan` | Market scanner: entry/SL/TP per setup (`min_score`, `timeframes`, `push`) |
+| POST | `/notify/test` | Send a test message to the configured channels |
 | GET | `/history` | Audit log |
 | POST | `/paper-trade` | Simulated order |
 

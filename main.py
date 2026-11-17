@@ -16,6 +16,7 @@ The HTML shell itself is public, it contains no data.
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import secrets
 import threading
@@ -30,6 +31,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 import control
+import notify
+import scanner
+import strategy as strat
 
 load_dotenv()
 
@@ -461,6 +465,72 @@ class PaperTrade(BaseModel):
     sl: float
     tp: float
     volume: float
+
+
+@app.get("/scan")
+def scan_market(min_score: int = 5, timeframes: str = "5,15,60",
+                symbols: Optional[str] = None, push: bool = False,
+                x_api_token: Optional[str] = Header(default=None),
+                token: Optional[str] = None,
+                authorization: Optional[str] = Header(default=None)):
+    """Scan the market and return setups with entry / SL / TP, best first."""
+    auth_read(x_api_token, authorization, token)
+
+    if not mt5_available():
+        stored = control.get("scan_last")
+        return {
+            "mt5": False,
+            "signals": json.loads(stored) if stored else [],
+            "note": "MetaTrader 5 is not connected on this server; showing the last scan.",
+            "updated": control.get("scan_updated"),
+        }
+
+    try:
+        tf_list = [int(x) for x in timeframes.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "timeframes must look like 5,15,60")
+
+    provider = scanner.MT5Provider(mt5)
+    provider.start()
+    symbol_list = ([s.strip().upper() for s in symbols.split(",") if s.strip()]
+                   if symbols else provider.symbols())
+
+    with _mt5_lock:
+        found = scanner.scan(provider, symbol_list, tf_list,
+                             strat.StrategyParams(), min_score=min_score)
+        fresh = scanner.unseen(found) if push else []
+
+    for sig in fresh:
+        notify.send(notify.format_signal(sig.__dict__ | {"max_score": sig.max_score}))
+        control.log_event("SCANNER", sig.symbol, sig.side, sig.entry, sig.sl, sig.tp,
+                          message=f"{sig.timeframe} score {sig.score}/{sig.max_score} "
+                                  f"{sig.regime} | {'; '.join(sig.reasons[:3])}")
+
+    payload = [sig.__dict__ for sig in found]
+    if payload:
+        control.set("scan_last", json.dumps(payload[:50]))
+    control.set("scan_updated", datetime.now(timezone.utc).isoformat())
+
+    return {"mt5": True, "symbols": len(symbol_list),
+            "timeframes": tf_list, "min_score": min_score,
+            "signals": payload, "pushed": len(fresh)}
+
+
+@app.post("/notify/test")
+def notify_test(x_api_token: Optional[str] = Header(default=None),
+                token: Optional[str] = None,
+                authorization: Optional[str] = Header(default=None)):
+    """Send a test message to every configured channel (Telegram / SMS)."""
+    auth(x_api_token, authorization, token)
+    configured = notify.channels()
+    if not configured:
+        return {"ok": False, "channels": [],
+                "message": "No channel configured. Set TELEGRAM_BOT_TOKEN + "
+                           "TELEGRAM_CHAT_ID, or the TWILIO_* + SMS_TO variables."}
+    results = notify.send("✅ Test från MT5-boten: notiser fungerar.")
+    return {"ok": all(r.ok for r in results), "channels": configured,
+            "results": [{"channel": r.channel, "ok": r.ok, "detail": r.detail}
+                        for r in results]}
 
 
 @app.post("/paper-trade")

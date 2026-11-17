@@ -151,6 +151,28 @@ R-baserad hantering (delvis vinst, break-even, trailing, circuit breaker).
 Allt är mätbart med `python backtest.py --symbol EURUSD --tf 5 --bars 50000`
 och förklaras i [RESEARCH.md](RESEARCH.md).
 
+## Få signaler i Telegram eller SMS
+
+Boten kan skanna hela marknaden och skicka **entry, SL, TP och R:R** till dig.
+
+**Telegram (gratis, rekommenderas):**
+1. Öppna Telegram, sök **@BotFather**, skriv `/newbot`, följ instruktionerna → du får en token.
+2. Skicka ett meddelande till din nya bot.
+3. Öppna `https://api.telegram.org/bot<DIN_TOKEN>/getUpdates` i webbläsaren och kopiera siffran efter `"chat":{"id":`.
+4. Lägg in i `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_CHAT_ID=987654321
+   ```
+5. Starta `run_scanner.bat` — den skannar var 5:e minut och skickar nya setups.
+6. Testa i mobilen: fliken **Scanner** → **Testa notiser**.
+
+**SMS (Twilio, kostar några ören per meddelande):** skapa konto på twilio.com,
+kopiera `Account SID` och `Auth Token`, fyll i `TWILIO_FROM` och `SMS_TO` i `.env`.
+
+Varje setup skickas **en gång** per symbol/tidsram/riktning/ljus — ingen spam.
+Boten öppnar inga trades själv i det här läget.
+
 ## Säkerhet & ansvar
 
 - Kör **DEMO** tills flödet fungerar. Byt till LIVE först när du förstår alla knappar.
